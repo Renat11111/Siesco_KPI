@@ -1,49 +1,46 @@
-# Siesco KPI - Project Architecture
+# Siesco KPI - Архитектура проекта
 
-## 1. Tech Stack
-- **Backend:** PocketBase (Go) - embedded in `main.go`.
-- **Frontend:** Wails -> React + TypeScript + Vite.
-- **Protocol:** Frontend talks to Backend via standard PocketBase JS SDK (`http://127.0.0.1:8090`), NOT via Wails bindings.
+## 1. Стек технологий
+- **Backend:** PocketBase (Go v1.25+) - кастомная сборка, разделенная на модули.
+- **Frontend:** Wails (React + TypeScript + Vite).
+- **База данных:** SQLite (встроена в PocketBase) с использованием SQL View для сложной агрегации.
 
-## 2. Key Features & Implementation
+## 2. Структура Бэкенда (Модульность)
+Код разделен на логические блоки для обеспечения поддерживаемости и тестируемости:
 
-### A. Dynamic Statuses
-- **Source of Truth:** `config.json` in the root.
-- **Sync Logic:** On `main.go` startup, the app reads `config.json` and upserts records into the `statuses` collection in DB.
-- **Frontend:** `DailyStats.tsx` and `TaskUpload.tsx` fetch valid statuses from DB.
-- **Design:** Colors are stored as semantic names ("success", "warning") and mapped to HEX via `frontend/src/lib/colors.ts`.
+- **`main.go`**: Точка входа. Отвечает за инициализацию сервера, настройку `AppContext`, регистрацию маршрутов (routes), хуков (hooks) и запуск процесса миграции БД (`bootstrapCollections`).
+- **`config.go`**: Содержит структуры данных (`AppConfig`, `StatusConfig`), константы имен коллекций/полей и структуру `AppContext` для внедрения зависимостей.
+- **`handlers.go`**: Содержит функции-обработчики API. Вся логика приема запросов и формирования ответов сосредоточена здесь.
+- **`helpers.go`**: Библиотека утилит. Включает парсинг JSON, валидацию дат, проверку статусов и "тяжелую" логику расчёта рейтингов.
+- **`helpers_test.go`**: Unit-тесты для проверки корректности работы утилит.
 
-### B. Dynamic Task Fields
-- **Source of Truth:** `config.json` in the root (section `task_fields`).
-- **Sync Logic:** On `main.go` startup, the app reads `config.json` and populates/updates the `task_fields` collection in DB **only if the collection is new or empty**. Subsequent changes in `config.json` will NOT overwrite existing records in the DB, allowing manual management via Admin UI. `time_spent` is guaranteed to be present.
-- **Frontend:** `TaskUpload.tsx` fetches `task_fields` from DB and uses them for dynamic Excel column mapping, type parsing, and validation based on column headers (matching `field.title`).
+## 3. Ключевые механизмы и оптимизации
 
-### C. Analytics & Performance
-- **View Collections:** We DO NOT fetch all tasks for all users on the frontend.
-- **`monthly_user_stats`:** A SQL View defined in `main.go` aggregates hours by user and month directly in SQLite.
-- **Charts:** 
-    - `DailyComparisonChart`: SVG-based, uses `viewBox` for responsiveness.
-    - `ColleagueRankingChart`: Uses `monthly_user_stats` view.
-    - `YearlyRankingChart`: Uses `monthly_user_stats` view (summed on frontend).
+### A. Внедрение зависимостей (`AppContext`)
+В проекте отсутствуют глобальные переменные состояния. Все зависимости (база данных, карта типов статусов) передаются в обработчики через структуру `AppContext`. Это делает код предсказуемым и упрощает написание тестов.
 
-### C. UX & Layout Strategy
-We use a hybrid layout approach defined in `App.css`:
-1.  **Task Upload Tab (`.container-upload`):** 
-    - **Single Pane of Glass.** `overflow: hidden`.
-    - No page scrolling. Content must fit.
-    - Left card combines "Upload Form" and "Rules" into one visual block.
-2.  **Analytics/List Tab (`.container-wide`):**
-    - **Standard Feed.** `overflow-y: auto`.
-    - Page scrolls vertically to accommodate multiple charts.
+### B. Оптимизация памяти (Streaming SQL)
+Для формирования рейтингов (месячных и годовых) используется потоковая обработка данных. Вместо загрузки всех записей в оперативную память, сервер читает строки из БД по одной через `Rows.Next()`.
+- **Результат:** Потребление памяти остается константным (O(1)) независимо от размера базы данных.
 
-### D. Component Specifics
-- **Date Badges:** Unified via `.date-badge` CSS class (28px height).
-- **Ranking Charts:** Have internal scrolling (`max-height: 400px`) to handle large numbers of users without breaking the page layout.
+### C. Динамические статусы и поля
+- **Источник истины:** `config.json`.
+- **Типизация:** Статусы в конфиге имеют поле `"type": "final"`, `"in_progress"` или `"return"`. Бэкенд автоматически учитывает эти типы при расчете KPI и фильтрации.
+- **Инициализация:** При первом запуске сервер сам создает необходимые коллекции и наполняет их данными из конфига.
 
-## 3. How to Run
-1.  **Backend:** `go run . serve` (Starts PocketBase on port 8090).
-2.  **Frontend:** `wails dev` (Starts UI).
+### D. Безопасность и Валидация
+- **Даты:** Все входящие даты проходят строгую проверку через `time.Parse`.
+- **Права:** Доступ к API защищен проверкой ролей (`superadmin`, `is_coordinator`).
+- **Целостность:** Реализована проверка существования записей и принадлежности к правильным коллекциям перед операциями записи.
 
-## 4. Troubleshooting
-- If "Missing collection context" error -> Restart Backend to recreate Views.
-- If Layout breaks -> Check `App.css` for `overflow` properties on `.container-*` classes.
+### E. Пагинация
+Эндпоинты списков (например, `actual-tasks`) поддерживают параметры `limit` и `offset`, что предотвращает перегрузку фронтенда при большом количестве задач.
+
+## 4. Как запустить
+1.  **Backend:** `go run . serve` (Автоматически подхватит все файлы пакета main).
+2.  **Tests:** `go test ./...`
+3.  **Frontend:** `wails dev`
+
+## 5. База данных
+- **Коллекции:** `tasks`, `users`, `statuses`, `task_fields`, `leave_requests`, `upload_logs`, `deletion_logs`.
+- **View:** `monthly_user_stats` — используется для быстрой агрегации часов на уровне SQL.

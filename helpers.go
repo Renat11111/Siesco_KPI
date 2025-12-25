@@ -55,7 +55,7 @@ func fetchTasksByDateRange(app *pocketbase.PocketBase, start, end, targetUser st
 
 func streamRanking(app *pocketbase.PocketBase, start, end string, statusMap map[string]string) (interface{}, error) {
 	// Raw SQL query to fetch minimal data
-	query := app.DB().NewQuery("SELECT user, data FROM tasks WHERE file_date >= {:start} AND file_date <= {:end} ORDER BY file_date ASC")
+	query := app.DB().NewQuery("SELECT " + FieldUser + ", " + FieldData + " FROM " + CollectionTasks + " WHERE " + FieldFileDate + " >= {:start} AND " + FieldFileDate + " <= {:end} ORDER BY " + FieldFileDate + " ASC")
 	query.Bind(map[string]interface{}{
 		"start": start,
 		"end":   end,
@@ -111,7 +111,10 @@ func streamRanking(app *pocketbase.PocketBase, start, end string, statusMap map[
 	}
 
 	// Fetch users mapping (small data, usually < 100 users)
-	users, _ := app.FindRecordsByFilter("users", "id != ''", "", 1000, 0, nil)
+	users, err := app.FindRecordsByFilter("users", "id != ''", "", 1000, 0, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch users for mapping: %w", err)
+	}
 	userMap := make(map[string]string)
 	emailMap := make(map[string]string)
 	for _, u := range users {

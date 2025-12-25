@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/mail"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/pocketbase/pocketbase"
@@ -27,316 +26,28 @@ func main() {
 			return e.String(200, "Hello world!")
 		})
 
-		// Custom Endpoint for Monthly Ranking
 		e.Router.GET("/api/kpi/ranking", func(e *core.RequestEvent) error {
-			month := e.Request.URL.Query().Get("month") // Expects "YYYY-MM"
-			if month == "" || !isValidMonth(month) {
-				return e.BadRequestError("Valid Month parameter is required (YYYY-MM)", nil)
-			}
-
-			start := month + "-01 00:00:00"
-			end := month + "-31 23:59:59"
-			response, err := streamRanking(app, start, end, appContext.StatusMap)
-			if err != nil {
-				return e.InternalServerError("Failed to calculate ranking", err)
-			}
-			return e.JSON(200, response)
+			return handleRanking(app, appContext, e)
 		})
 
-		// Custom Endpoint for Yearly Ranking
 		e.Router.GET("/api/kpi/yearly-ranking", func(e *core.RequestEvent) error {
-			year := e.Request.URL.Query().Get("year") // Expects "YYYY"
-			if year == "" || !isValidYear(year) {
-				return e.BadRequestError("Valid Year parameter is required (YYYY)", nil)
-			}
-
-			start := year + "-01-01 00:00:00"
-			end := year + "-12-31 23:59:59"
-
-			response, err := streamRanking(app, start, end, appContext.StatusMap)
-			if err != nil {
-				return e.InternalServerError("Failed to calculate yearly stats", err)
-			}
-			
-			return e.JSON(200, response)
+			return handleYearlyRanking(app, appContext, e)
 		})
 
-		// Custom Endpoint for Actual Unfinished Tasks
 		e.Router.GET("/api/kpi/actual-tasks", func(e *core.RequestEvent) error {
-			start := e.Request.URL.Query().Get("start")
-			end := e.Request.URL.Query().Get("end")
-			targetUser := e.Request.URL.Query().Get("user")
-
-			if start == "" || end == "" || !isValidDateTime(start) || !isValidDateTime(end) {
-				return e.BadRequestError("Valid Start and End dates are required", nil)
-			}
-
-			limit, _ := strconv.Atoi(e.Request.URL.Query().Get("limit"))
-			offset, _ := strconv.Atoi(e.Request.URL.Query().Get("offset"))
-
-			records, err := fetchTasksByDateRange(app, start, end, targetUser, limit, offset)
-			if err != nil {
-				return e.InternalServerError("Failed to fetch tasks", err)
-			}
-
-			latestTasks := make(map[string]map[string]interface{})
-			taskMeta := make(map[string]map[string]string) 
-
-			for _, r := range records {
-				taskList, err := parseTaskData(r.GetString(FieldData))
-				if err != nil { continue }
-
-				fileDate := r.GetString("file_date")
-				fileId := r.Id
-
-				for _, t := range taskList {
-					taskNum := fmt.Sprintf("%v", t["task_number"])
-					if taskNum == "" { continue }
-
-					latestTasks[taskNum] = t
-					taskMeta[taskNum] = map[string]string{
-						"source_file_date": fileDate,
-						"source_file_id":   fileId,
-					}
-				}
-			}
-
-			result := []map[string]interface{}{}
-
-			for tNum, task := range latestTasks {
-				// Check strictly for unfinished statuses
-				if isStatusInProgress(task["status"], appContext.StatusMap) {
-					
-					if meta, exists := taskMeta[tNum]; exists {
-						task["source_file_date"] = meta["source_file_date"]
-						task["source_file_id"] = meta["source_file_id"]
-					}
-					result = append(result, task)
-				}
-			}
-
-			return e.JSON(200, result)
+			return handleActualTasks(app, appContext, e)
 		})
 
-		// Custom Endpoint for Grouping Completed Tasks
 		e.Router.GET("/api/kpi/completed-tasks-grouped", func(e *core.RequestEvent) error {
-			start := e.Request.URL.Query().Get("start")
-			end := e.Request.URL.Query().Get("end")
-			targetUser := e.Request.URL.Query().Get("user")
-
-			if start == "" || end == "" || !isValidDateTime(start) || !isValidDateTime(end) {
-				return e.BadRequestError("Valid Start and End dates are required", nil)
-			}
-
-			limit, _ := strconv.Atoi(e.Request.URL.Query().Get("limit"))
-			offset, _ := strconv.Atoi(e.Request.URL.Query().Get("offset"))
-
-			records, err := fetchTasksByDateRange(app, start, end, targetUser, limit, offset)
-			if err != nil {
-				return e.InternalServerError("Failed to fetch tasks", err)
-			}
-
-			type AggregatedTask struct {
-				LatestData      map[string]interface{}
-				TotalTimeSpent  float64
-				LatestFileDate  string
-				LatestFileId    string
-			}
-
-			taskMap := make(map[string]*AggregatedTask)
-
-			for _, r := range records {
-				taskList, err := parseTaskData(r.GetString(FieldData))
-				if err != nil { continue }
-
-				fileDate := r.GetString("file_date")
-				fileId := r.Id
-
-				for _, t := range taskList {
-					taskNumStr := fmt.Sprintf("%v", t["task_number"])
-					if taskNumStr == "" { continue }
-
-					if _, exists := taskMap[taskNumStr]; !exists {
-						taskMap[taskNumStr] = &AggregatedTask{
-							LatestData:     t,
-							TotalTimeSpent: 0,
-							LatestFileDate: fileDate,
-							LatestFileId:   fileId,
-						}
-					}
-
-					agg := taskMap[taskNumStr]
-
-					// Sum time_spent
-					agg.TotalTimeSpent += getTimeSpent(t["time_spent"])
-
-					// Update latest data
-					agg.LatestData = t
-					agg.LatestFileDate = fileDate
-					agg.LatestFileId = fileId
-				}
-			}
-
-			result := []map[string]interface{}{}
-
-			for _, agg := range taskMap {
-				// Check strictly for COMPLETED statuses
-				if isStatusCompleted(agg.LatestData["status"], appContext.StatusMap) {
-					
-					agg.LatestData["time_spent"] = agg.TotalTimeSpent
-					agg.LatestData["source_file_date"] = agg.LatestFileDate
-					agg.LatestData["source_file_id"] = agg.LatestFileId
-					
-					result = append(result, agg.LatestData)
-				}
-			}
-
-			return e.JSON(200, result)
+			return handleCompletedTasksGrouped(app, appContext, e)
 		})
 
-		// Custom Endpoint for Actual Returned Tasks (In Progress Return)
 		e.Router.GET("/api/kpi/returned-tasks", func(e *core.RequestEvent) error {
-			start := e.Request.URL.Query().Get("start")
-			end := e.Request.URL.Query().Get("end")
-			targetUser := e.Request.URL.Query().Get("user")
-
-			if start == "" || end == "" || !isValidDateTime(start) || !isValidDateTime(end) {
-				return e.BadRequestError("Valid Start and End dates are required", nil)
-			}
-
-			limit, _ := strconv.Atoi(e.Request.URL.Query().Get("limit"))
-			offset, _ := strconv.Atoi(e.Request.URL.Query().Get("offset"))
-
-			records, err := fetchTasksByDateRange(app, start, end, targetUser, limit, offset)
-			if err != nil {
-				return e.InternalServerError("Failed to fetch tasks", err)
-			}
-
-			latestTasks := make(map[string]map[string]interface{})
-			taskMeta := make(map[string]map[string]string) 
-
-			for _, r := range records {
-				taskList, err := parseTaskData(r.GetString(FieldData))
-				if err != nil { continue }
-
-				fileDate := r.GetString("file_date")
-				fileId := r.Id
-
-				for _, t := range taskList {
-					taskNum := fmt.Sprintf("%v", t["task_number"])
-					if taskNum == "" { continue }
-
-					latestTasks[taskNum] = t
-					taskMeta[taskNum] = map[string]string{
-						"source_file_date": fileDate,
-						"source_file_id":   fileId,
-					}
-				}
-			}
-
-			result := []map[string]interface{}{}
-
-			for tNum, task := range latestTasks {
-				// Check strictly for RETURNED statuses (In Progress Return only)
-				if isStatusInProgressReturn(task["status"], appContext.StatusMap) {
-					
-					if meta, exists := taskMeta[tNum]; exists {
-						task["source_file_date"] = meta["source_file_date"]
-						task["source_file_id"] = meta["source_file_id"]
-					}
-					result = append(result, task)
-				}
-			}
-
-			return e.JSON(200, result)
+			return handleReturnedTasks(app, appContext, e)
 		})
 
-		// Endpoint to update task time_spent (Admin/Coordinator only)
 		e.Router.POST("/api/kpi/update-task-time", func(e *core.RequestEvent) error {
-			// Check permissions: only superadmin or coordinator
-			admin := e.Auth
-			if admin == nil {
-				return e.UnauthorizedError("Login required", nil)
-			}
-			
-			isSuper := admin.GetBool("superadmin")
-			isCoord := admin.GetBool("is_coordinator")
-
-			if !isSuper && !isCoord {
-				return e.ForbiddenError("Insufficient permissions", nil)
-			}
-
-			data := struct {
-				RecordId   string  `json:"record_id"`
-				TaskNumber string  `json:"task_number"`
-				NewTime    float64 `json:"new_time"`
-			}{}
-
-			if err := e.BindBody(&data); err != nil {
-				return e.BadRequestError("Invalid request body", err)
-			}
-
-			if data.RecordId == "" || data.TaskNumber == "" {
-				return e.BadRequestError("record_id and task_number are required", nil)
-			}
-
-			record, err := app.FindRecordById(CollectionTasks, data.RecordId)
-			if err != nil {
-				return e.NotFoundError("Record not found", err)
-			}
-
-			taskList, err := parseTaskData(record.GetString(FieldData))
-			if err != nil {
-				return e.InternalServerError("Failed to parse task data", err)
-			}
-
-			found := false
-			updated := false
-
-			for i, t := range taskList {
-				tNumStr := fmt.Sprintf("%v", t["task_number"])
-
-				if tNumStr == data.TaskNumber {
-					found = true
-					
-					// Get current time
-					currentTime := getTimeSpent(t["time_spent"])
-
-					// Update logic
-					if currentTime != data.NewTime {
-						updated = true
-						
-						alreadyEdited, _ := t["is_edited"].(bool)
-
-						if !alreadyEdited {
-							t["original_time_spent"] = currentTime
-						}
-						
-						t["time_spent"] = data.NewTime
-						t["is_edited"] = true
-
-						taskList[i] = t 
-					}
-					break
-				}
-			}
-
-			if !found {
-				return e.NotFoundError("Task number not found in this record", nil)
-			}
-
-			if updated {
-				newJsonBytes, err := json.Marshal(taskList)
-				if err != nil {
-					return e.InternalServerError("Failed to serialize updated data", err)
-				}
-				record.Set(FieldData, string(newJsonBytes))
-				if err := app.Save(record); err != nil {
-					return e.InternalServerError("Failed to save record", err)
-				}
-			}
-
-			return e.JSON(200, map[string]interface{}{"success": true, "updated": updated})
+			return handleUpdateTaskTime(app, appContext, e)
 		})
 
 		// --- HOOK: Leave Request Security & Notification ---
@@ -566,6 +277,10 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 	var appConfig AppConfig
 	if err := json.Unmarshal(bytes, &appConfig); err != nil {
 		log.Fatalf("CRITICAL: Failed to parse config.json: %v", err)
+	}
+
+	if len(appConfig.Statuses) == 0 {
+		log.Fatal("CRITICAL: config.json must contain at least one status")
 	}
 
 	// Populate context map with both Slug and Title for flexible lookup
