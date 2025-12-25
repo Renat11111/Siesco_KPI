@@ -798,12 +798,16 @@ func bootstrapCollections(app *pocketbase.PocketBase) error {
 			statusesCollection.Fields.Add(&core.TextField{Name: "slug", Required: true})
 			statusesCollection.Fields.Add(&core.SelectField{Name: "color", Required: true, MaxSelect: 1, Values: []string{"slate", "gray", "zinc", "neutral", "stone", "red", "orange", "amber", "yellow", "lime", "green", "emerald", "teal", "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink", "rose", "success", "warning", "danger", "info", "primary", "secondary"}})
 			statusesCollection.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
-			if err := app.Save(statusesCollection); err == nil {
-				for _, s := range appConfig.Statuses {
-					record := core.NewRecord(statusesCollection)
-					record.Set("title", s.Title); record.Set("slug", s.Slug); record.Set("color", s.Color)
-					app.Save(record)
-				}
+			
+			if err := app.Save(statusesCollection); err != nil {
+				return err
+			}
+
+			// Populate initial statuses
+			for _, s := range appConfig.Statuses {
+				record := core.NewRecord(statusesCollection)
+				record.Set("title", s.Title); record.Set("slug", s.Slug); record.Set("color", s.Color)
+				app.Save(record)
 			}
 		}
 
@@ -818,12 +822,16 @@ func bootstrapCollections(app *pocketbase.PocketBase) error {
 			fieldsCollection.Fields.Add(&core.BoolField{Name: "required"})
 			fieldsCollection.Fields.Add(&core.BoolField{Name: "filterable"})
 			fieldsCollection.Fields.Add(&core.NumberField{Name: "order"})
+			
 			if err := app.Save(fieldsCollection); err != nil {
-				for i, f := range appConfig.TaskFields {
-					record := core.NewRecord(fieldsCollection)
-					record.Set("key", f.Key); record.Set("title", f.Title); record.Set("type", f.Type); record.Set("required", f.Required); record.Set("width", f.Width); record.Set("filterable", f.Filterable); record.Set("order", i)
-					app.Save(record)
-				}
+				return err
+			}
+
+			// Populate initial task_fields
+			for i, f := range appConfig.TaskFields {
+				record := core.NewRecord(fieldsCollection)
+				record.Set("key", f.Key); record.Set("title", f.Title); record.Set("type", f.Type); record.Set("required", f.Required); record.Set("width", f.Width); record.Set("filterable", f.Filterable); record.Set("order", i)
+				app.Save(record)
 			}
 		}
 	}
