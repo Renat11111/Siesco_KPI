@@ -61,7 +61,6 @@ func main() {
 			newEnd := e.Record.GetString("end_date")
 			userId := e.Record.GetString("user")
 
-			// Ищем не отклоненные заявки, пересекающиеся с новым периодом
 			existing, err := app.FindRecordsByFilter(
 				"leave_requests",
 				"user = {:user} && status != 'rejected' && start_date <= {:newEnd} && end_date >= {:newStart}",
@@ -73,46 +72,53 @@ func main() {
 					"newEnd":   newEnd,
 				},
 			)
-
-			if err != nil {
-				return fmt.Errorf("failed to check for overlaps: %w", err)
-			}
-
+			if err != nil { return fmt.Errorf("failed to check for overlaps: %w", err) }
 			if len(existing) > 0 {
-				// Возвращаем ошибку, которую фронтенд сможет отобразить
-				return e.BadRequestError("You already have an active leave request for this period (overlapping dates)", nil)
+				return e.BadRequestError("You already have an active leave request for this period", nil)
 			}
 
+			// 2. Сначала сохраняем запись
 			if err := e.Next(); err != nil {
 				return err
 			}
 
-			requestRecord := e.Record
-			user, _ := app.FindRecordById("users", requestRecord.GetString("user"))
-			userName := "Unknown"
-			if user != nil { userName = user.GetString("name") }
+			// 3. Копируем данные для фоновой задачи (Изоляция от Race Condition)
+			// Это критически важно: горутина должна работать с копией, а не с e.Record
+			reasonCopy := e.Record.GetString("reason")
+			userIdCopy := userId // уже извлечен выше
 
-			admins, err := app.FindRecordsByFilter("users", "superadmin=true || is_coordinator=true", "", 100, 0, nil)
-			if err != nil || len(admins) == 0 { return nil }
-
-			subject := fmt.Sprintf("New Leave Request from %s", userName)
-			body := fmt.Sprintf(`<h3>New Leave Request</h3><p><strong>User:</strong> %s</p><p><strong>From:</strong> %s</p><p><strong>To:</strong> %s</p><p><strong>Reason:</strong> %s</p>`, 
-				userName, requestRecord.GetString("start_date"), requestRecord.GetString("end_date"), requestRecord.GetString("reason"))
-
-			senderAddress := app.Settings().Meta.SenderAddress
-			senderName := app.Settings().Meta.SenderName
-			
-			for _, admin := range admins {
-				email := admin.GetString("email")
-				if email == "" { continue }
-				message := &mailer.Message{
-					From:    mail.Address{Address: senderAddress, Name: senderName},
-					To:      []mail.Address{{Address: email}},
-					Subject: subject,
-					HTML:    body,
+			// Отправка уведомлений в фоне
+			go func(reason, uid string) {
+				userName := "Unknown"
+				userRecord, _ := app.FindRecordById("users", uid)
+				if userRecord != nil {
+					userName = userRecord.GetString("name")
 				}
-				app.NewMailClient().Send(message)
-			}
+
+				admins, err := app.FindRecordsByFilter("users", "superadmin=true || is_coordinator=true", "", 100, 0, nil)
+				if err != nil || len(admins) == 0 { return }
+
+				subject := fmt.Sprintf("New Leave Request from %s", userName)
+				body := fmt.Sprintf(`<h3>New Leave Request</h3><p><strong>User:</strong> %s</p><p><strong>Reason:</strong> %s</p>`, 
+					userName, reason)
+
+				senderAddress := app.Settings().Meta.SenderAddress
+				senderName := app.Settings().Meta.SenderName
+				
+				mailClient := app.NewMailClient()
+				for _, admin := range admins {
+					email := admin.GetString("email")
+					if email == "" { continue }
+					message := &mailer.Message{
+						From:    mail.Address{Address: senderAddress, Name: senderName},
+						To:      []mail.Address{{Address: email}},
+						Subject: subject,
+						HTML:    body,
+					}
+					mailClient.Send(message)
+				}
+			}(reasonCopy, userIdCopy)
+
 			return nil
 		})
 

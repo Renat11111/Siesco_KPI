@@ -13,6 +13,7 @@ import {
 
 interface TaskUploadProps {
     lang: Language;
+    user: any;
 }
 
 interface User {
@@ -21,7 +22,7 @@ interface User {
     email: string;
 }
 
-export default function TaskUpload({ lang }: TaskUploadProps) {
+export default function TaskUpload({ lang, user }: TaskUploadProps) {
     const t = translations[lang];
     const { statuses, fields: taskFields, loading: settingsLoading } = useSettings();
 
@@ -55,7 +56,7 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
     // Fetch files when entering delete mode or changing filters
     useEffect(() => {
         if (uploadMode === 'delete') {
-            const targetUser = selectedUserId || pb.authStore.record?.id;
+            const targetUser = (isSuperAdmin && selectedUserId) ? selectedUserId : user?.id;
             if (targetUser && fileDate) {
                 // Clear state immediately to show feedback
                 setAvailableFiles([]);
@@ -91,10 +92,9 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
 
     useEffect(() => {
         const loadInitialData = async () => {
-            const currentUser = pb.authStore.record;
-            if (currentUser) {
-                setSelectedUserId(currentUser.id);
-                if (currentUser.superadmin) {
+            if (user) {
+                setSelectedUserId(user.id);
+                if (user.superadmin) {
                     setIsSuperAdmin(true);
                     try {
                         const allUsers = await pb.collection('users').getFullList({
@@ -110,7 +110,7 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
         };
 
         loadInitialData();
-    }, []);
+    }, [user?.id]);
 
     const handleFiles = (files: FileList | null) => {
         const file = files?.[0];
@@ -229,9 +229,9 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
             return;
         }
 
-        // --- SUPERADMIN CONFIRMATION ---
-        const user = pb.authStore.record;
-        const targetUserId = selectedUserId || user?.id;
+        // --- STRICT TARGET USER IDENTIFICATION ---
+        // If not superadmin, we MUST use the authenticated user ID
+        const targetUserId = (isSuperAdmin && selectedUserId) ? selectedUserId : user?.id;
         
         if (isSuperAdmin && user && targetUserId !== user.id) {
             const targetUserName = users.find(u => u.id === targetUserId)?.name || targetUserId || "Unknown";

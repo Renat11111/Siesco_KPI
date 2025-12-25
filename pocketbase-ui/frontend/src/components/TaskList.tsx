@@ -19,9 +19,10 @@ type Task = Record<string, any> & {
 
 interface TaskListProps {
     lang: Language;
+    user: any;
 }
 
-export default function TaskList({ lang }: TaskListProps) {
+export default function TaskList({ lang, user }: TaskListProps) {
     const t = translations[lang];
     const { statuses, fields, loading: settingsLoading } = useSettings();
 
@@ -55,7 +56,6 @@ export default function TaskList({ lang }: TaskListProps) {
 
     useEffect(() => {
         const checkUserRole = async () => {
-             const user = pb.authStore.record;
              if (user) {
                  setSelectedUserId(user.id); // Default to self
                  if (user.superadmin || user.is_coordinator) {
@@ -92,13 +92,15 @@ export default function TaskList({ lang }: TaskListProps) {
         setStartDate(initialStartDate);
         setEndDate(initialEndDate);
         
-        fetchTasks(initialStartDate, initialEndDate, pb.authStore.record?.id, false, false); // Default to history mode
-    }, []);
+        if (user?.id) {
+            fetchTasks(initialStartDate, initialEndDate, user.id, false, false); 
+        }
+    }, [user?.id]);
 
     const fetchTasks = async (start = startDate, end = endDate, userIdOverride?: string, unfinishedMode = showUnfinishedOnly, groupedCompletedMode = showGroupedCompleted) => {
         if (!start || !end) return;
         
-        const targetUserId = userIdOverride || selectedUserId || pb.authStore.record?.id;
+        const targetUserId = userIdOverride || selectedUserId || user?.id;
         if (!targetUserId) return;
 
         setLoading(true);

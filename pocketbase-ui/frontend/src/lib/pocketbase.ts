@@ -1,6 +1,8 @@
-import PocketBase, { ClientResponseError } from 'pocketbase';
+import PocketBase, { ClientResponseError, BaseAuthStore } from 'pocketbase';
 
-const pb = new PocketBase('http://127.0.0.1:8090');
+// Используем BaseAuthStore (в памяти), чтобы разные окна Wails 
+// не конфликтовали через общее localStorage.
+const pb = new PocketBase('http://127.0.0.1:8090', new BaseAuthStore());
 
 export interface RankingItem {
     user_id: string;

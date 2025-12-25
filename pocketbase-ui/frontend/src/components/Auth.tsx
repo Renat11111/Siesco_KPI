@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import pb from '../lib/pocketbase';
 import { ClientResponseError } from 'pocketbase';
 import TaskUpload from './TaskUpload';
@@ -31,6 +31,15 @@ export default function Auth({ lang, setLang }: AuthProps) {
     
     const [user, setUser] = useState(pb.authStore.record);
     const [viewMode, setViewMode] = useState<ViewMode>('upload');
+
+    // Глобальное отслеживание авторизации
+    useEffect(() => {
+        const unsubscribe = pb.authStore.onChange((_token, record) => {
+            console.log("[Auth] Auth store changed, updating user state");
+            setUser(record);
+        });
+        return () => unsubscribe();
+    }, []);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -160,13 +169,13 @@ export default function Auth({ lang, setLang }: AuthProps) {
                     <div className="page-content">
                         <div className={`container-wrapper ${viewMode === 'upload' ? 'container-upload' : 'container-wide'} `}>
                             {viewMode === 'upload' ? (
-                                <TaskUpload lang={lang} />
+                                <TaskUpload lang={lang} user={user} />
                             ) : viewMode === 'analytics' ? (
                                 <AnalyticsView lang={lang} />
                             ) : viewMode === 'list' ? (
-                                <TaskList lang={lang} />
+                                <TaskList lang={lang} user={user} />
                             ) : (
-                                <LeaveRequests lang={lang} />
+                                <LeaveRequests lang={lang} user={user} />
                             )}
                         </div>
                     </div>

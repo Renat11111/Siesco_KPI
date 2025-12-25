@@ -4,6 +4,7 @@ import { translations, Language } from '../lib/translations';
 
 interface LeaveRequestsProps {
     lang: Language;
+    user: any; // User passed from parent Auth component
 }
 
 interface LeaveRequest {
@@ -13,7 +14,7 @@ interface LeaveRequest {
     reason: string;
     status: 'pending' | 'approved' | 'rejected';
     created: string;
-    user: string; // The owner ID
+    user: string;
     expand?: {
         user?: {
             name: string;
@@ -22,21 +23,28 @@ interface LeaveRequest {
     }
 }
 
-export default function LeaveRequests({ lang }: LeaveRequestsProps) {
+export default function LeaveRequests({ lang, user: initialUser }: LeaveRequestsProps) {
     const t = translations[lang];
     const [loading, setLoading] = useState(false);
-    const [submitting, setSubmitting] = useState(false);
+    const [isFormSubmitting, setIsFormSubmitting] = useState(false);
     const [requests, setRequests] = useState<LeaveRequest[]>([]);
     const [fetchError, setFetchError] = useState('');
     
-    // 1. Solid Auth Check
-    const user = pb.authStore.record;
+    // 1. Dynamic Auth Monitoring
+    const [currentUser, setCurrentUser] = useState(pb.authStore.record);
     const isAdmin = useMemo(() => {
-        if (!user) return false;
-        const res = user.superadmin === true || user.is_coordinator === true;
-        console.log(`[LeaveRequests] User: ${user.email}, isAdmin: ${res}`);
-        return res;
-    }, [user]);
+        if (!currentUser) return false;
+        return currentUser.superadmin === true || currentUser.is_coordinator === true;
+    }, [currentUser]);
+
+    // Update local user state if global auth store changes
+    useEffect(() => {
+        const unsubscribe = pb.authStore.onChange((_token, record) => {
+            console.log("[LeaveRequests] Auth store changed dynamically");
+            setCurrentUser(record);
+        });
+        return () => unsubscribe();
+    }, []);
 
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
@@ -61,61 +69,85 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
     const today = getLocalStr(new Date());
 
     const fetchRequests = async () => {
-        if (!user) return;
+        const authUser = pb.authStore.record;
+        if (!authUser?.id) return;
+        
         setLoading(true);
         setFetchError('');
         try {
-            const filterExpr = `created >= "${filterStart} 00:00:00" && created <= "${filterEnd} 23:59:59"`;
+            let filterExpr = `created >= "${filterStart} 00:00:00" && created <= "${filterEnd} 23:59:59"`;
+            if (!isAdmin) {
+                filterExpr += ` && user = "${authUser.id}"`;
+            }
+
             const records = await pb.collection('leave_requests').getList<LeaveRequest>(1, 200, {
                 filter: filterExpr,
                 sort: '-created',
                 expand: 'user',
+                requestKey: null
             });
-            setRequests(records.items);
+
+            // Final identity check: ensure we didn't switch users during the fetch
+            if (pb.authStore.record?.id === authUser.id) {
+                setRequests(records.items);
+            }
         } catch (err: any) {
-            console.error("Fetch error", err);
-            setFetchError(err.message);
+            if (err.isAbort) return;
+            setFetchError(handleApiError(err, t));
         } finally {
             setLoading(false);
         }
     };
 
+    // Load data and handle Real-time
     useEffect(() => {
+        if (!currentUser?.id) return;
+
         fetchRequests();
+
+        // 2. Simple & Reliable Subscription
+        // We subscribe to all changes in the collection to ensure delete events are caught.
+        // fetchRequests() will handle the actual data filtering based on the current user.
         const sub = pb.collection('leave_requests').subscribe('*', (e) => {
-            console.log("[LeaveRequests] Real-time event:", e.action);
+            console.log("[LeaveRequests] RT event received:", e.action);
             fetchRequests();
         });
-        return () => { sub.then(unsub => unsub()); };
-    }, [filterStart, filterEnd, user?.id]);
+
+        return () => { 
+            pb.collection('leave_requests').unsubscribe('*');
+        };
+    }, [filterStart, filterEnd, currentUser?.id, isAdmin]);
 
     const handleSubmit = async (e: React.FormEvent) => {
+        if (isFormSubmitting) return;
+        
         e.preventDefault();
-        setSubmitting(true);
+        setIsFormSubmitting(true);
         setMessage('');
         setError('');
 
-        if (startDate < today) { setError(t.errorPastDate); setSubmitting(false); return; }
-        if (endDate < startDate) { setError(t.errorEndDate); setSubmitting(false); return; }
+        if (startDate < today) { setError(t.errorPastDate); setIsFormSubmitting(false); return; }
+        if (endDate < startDate) { setError(t.errorEndDate); setIsFormSubmitting(false); return; }
 
         try {
             await pb.collection('leave_requests').create({
                 start_date: startDate,
                 end_date: endDate,
                 reason: reason,
-                status: 'pending'
+                status: 'pending',
+                user: currentUser?.id
             });
+            
             setMessage(t.requestSubmitted);
             setStartDate(''); setEndDate(''); setReason('');
         } catch (err: any) {
-            // Check for specific overlap message from server
-            if (err.message?.includes("overlapping dates")) {
+            if (err.message?.includes("overlapping dates") || err.message?.includes("error_overlap")) {
                 setError(t.errorOverlap);
             } else {
                 setError(handleApiError(err, t));
             }
         } finally {
-            setSubmitting(false);
+            setIsFormSubmitting(false);
         }
     };
 
@@ -123,9 +155,7 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
         const record = requests.find(r => r.id === id);
         if (!record) return;
 
-        // Security: only owner (if pending) or admin can delete
-        const isOwner = record.user === user?.id;
-        if (!isAdmin && (!isOwner || record.status !== 'pending')) {
+        if (!isAdmin && record.user !== currentUser?.id) {
             alert("Access denied");
             return;
         }
@@ -139,10 +169,7 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
     };
 
     const handleStatusChange = async (id: string, newStatus: string) => {
-        if (!isAdmin) {
-            alert("Access denied");
-            return;
-        }
+        if (!isAdmin) return;
         try {
             await pb.collection('leave_requests').update(id, { status: newStatus });
         } catch (err: any) {
@@ -178,8 +205,8 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
                             <label className="form-label">{t.reason}</label>
                             <textarea className="input" required value={reason} onChange={(e) => setReason(e.target.value)} style={{ resize: 'none', height: '100%', minHeight: '120px' }} />
                         </div>
-                        <button type="submit" className="btn" disabled={submitting} style={{ marginTop: 'auto' }}>
-                            {submitting ? t.processing : t.submitRequest}
+                        <button type="submit" className="btn" disabled={isFormSubmitting} style={{ marginTop: 'auto' }}>
+                            {isFormSubmitting ? t.processing : t.submitRequest}
                         </button>
                     </form>
                 </div>
@@ -200,7 +227,7 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
                     </div>
 
                     <div className="table-wrapper" style={{ border: 'none', flex: 1, overflowY: 'auto' }}>
-                        {loading ? (
+                        {loading && requests.length === 0 ? (
                             <div style={{ textAlign: 'center', padding: '3rem' }}>{t.loading}</div>
                         ) : requests.length === 0 ? (
                             <div className="empty-state" style={{ margin: '3rem' }}>{t.noTasks}</div>
@@ -240,7 +267,7 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
                                                 )}
                                             </td>
                                             <td style={{ textAlign: 'center' }}>
-                                                {(isAdmin || req.status === 'pending') && (
+                                                {(isAdmin || (req.user === currentUser?.id && req.status === 'pending')) && (
                                                     <button onClick={() => handleDelete(req.id)} className="btn-icon" style={{ color: 'var(--text-light)' }}>🗑️</button>
                                                 )}
                                             </td>
