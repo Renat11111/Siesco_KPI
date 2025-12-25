@@ -1,0 +1,28 @@
+# Binaries & Builds
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+Siesco_KPI_Backup_*.zip
+pocketbase-ui/build/bin/
+
+# PocketBase Data
+pb_data/
+
+# Logs & Temp
+_analysis_restore/
+_temp_backup_*/
+*.log
+
+# Frontend dependencies & dist
+node_modules/
+pocketbase-ui/frontend/node_modules/
+pocketbase-ui/frontend/dist/
+pocketbase-ui/frontend/.vite/
+
+# IDE & OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

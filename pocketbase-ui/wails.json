@@ -1,0 +1,13 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "SiescoKPI",
+  "outputfilename": "SiescoKPI",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Renat11111",
+    "email": "https://github.com/Renat11111-renat1c2016@gmail.com"
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "statuses": [
+    {
+      "title": "Завершена",
+      "slug": "completed",
+      "color": "success"
+    },
+    {
+      "title": "Завершена (возврат)",
+      "slug": "completed_return",
+      "color": "warning"
+    },
+    {
+      "title": "Завершена (апелляция)",
+      "slug": "completed_appeal",
+      "color": "primary"
+    },
+    {
+      "title": "Выполняется",
+      "slug": "in_progress",
+      "color": "info"
+    },
+    {
+      "title": "Выполняется (возврат)",
+      "slug": "in_progress_return",
+      "color": "warning"
+    }
+  ],
+  "task_fields": [
+    {
+      "key": "task_number",
+      "title": "№ Задачи",
+      "type": "text",
+      "required": true,
+      "width": "100px",
+      "filterable": true
+    },
+    {
+      "key": "programmer_estimate",
+      "title": "Оценка",
+      "type": "number",
+      "required": false,
+      "width": "70px",
+      "filterable": true
+    },
+    {
+      "key": "time_spent",
+      "title": "Затрачено",
+      "type": "number",
+      "required": true,
+      "width": "120px",
+      "filterable": true
+    },
+    {
+      "key": "original_time_spent",
+      "title": "Оригинал (ч)",
+      "type": "number",
+      "required": false,
+      "width": "100px",
+      "filterable": false
+    },
+    {
+      "key": "is_edited",
+      "title": "Ред.",
+      "type": "boolean",
+      "required": false,
+      "width": "50px",
+      "filterable": true
+    },
+    {
+      "key": "status",
+      "title": "Статус",
+      "type": "select",
+      "required": true,
+      "width": "120px",
+      "filterable": true
+    },
+    {
+      "key": "date",
+      "title": "Дата",
+      "type": "date",
+      "required": true,
+      "width": "100px",
+      "filterable": true
+    },
+    {
+      "key": "project",
+      "title": "Проект",
+      "type": "text",
+      "required": true,
+      "width": "150px",
+      "filterable": true
+    },
+    {
+      "key": "description",
+      "title": "Описание задачи",
+      "type": "text",
+      "required": false,
+      "width": "400px",
+      "filterable": true
+    }
+  ]
+}
