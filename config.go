@@ -36,4 +36,5 @@ const (
 	FieldFileName   = "file_name"
 	StatusFinal     = "final"
 	StatusReturn    = "return"
+	MaxFetchLimit   = 10000
 )

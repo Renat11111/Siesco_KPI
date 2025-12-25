@@ -46,11 +46,11 @@ func fetchTasksByDateRange(app *pocketbase.PocketBase, start, end, targetUser st
 		params["user"] = targetUser
 	}
 
-	if limit <= 0 {
-		limit = 10000 // Default high limit for backward compatibility
+	if limit <= 0 || limit > MaxFetchLimit {
+		limit = MaxFetchLimit // Default high limit or cap
 	}
 
-	return app.FindRecordsByFilter("tasks", filter, "+file_date", limit, offset, params)
+	return app.FindRecordsByFilter(CollectionTasks, filter, "+file_date", limit, offset, params)
 }
 
 func streamRanking(app *pocketbase.PocketBase, start, end string, statusMap map[string]string) (interface{}, error) {
