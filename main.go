@@ -87,21 +87,10 @@ func main() {
 				}
 				entry := statsMap[userId]
 
-				var taskList []map[string]interface{}
-				
-				// Parse JSON safely with UseNumber
-				decoder := json.NewDecoder(strings.NewReader(r.GetString("data")))
-				decoder.UseNumber()
-				if err := decoder.Decode(&taskList); err == nil {
+				taskList, err := parseTaskData(r.GetString("data"))
+				if err == nil {
 					for _, t := range taskList {
-						// Handle time_spent safely (could be string or number in JSON)
-						var h float64
-						if val, ok := t["time_spent"].(json.Number); ok {
-							h, _ = val.Float64()
-						} else if val, ok := t["time_spent"].(float64); ok {
-							h = val
-						}
-						entry.TotalHours += h
+						entry.TotalHours += getTimeSpent(t["time_spent"])
 						
 						tNum := fmt.Sprintf("%v", t["task_number"])
 						if tNum != "" {
@@ -132,8 +121,7 @@ func main() {
 			for userId, stat := range statsMap {
 				completedCount := 0
 				for _, status := range stat.TaskStatuses {
-					norm := strings.ToLower(strings.TrimSpace(status))
-					if norm == "completed" || norm == "завершена" || norm == "completed_return" || norm == "завершена (возврат)" || norm == "completed_appeal" || norm == "завершена (апелляция)" {
+					if isStatusCompleted(status) {
 						completedCount++
 					}
 				}
@@ -194,18 +182,10 @@ func main() {
 				}
 				entry := statsMap[userId]
 
-				var taskList []map[string]interface{}
-				decoder := json.NewDecoder(strings.NewReader(r.GetString("data")))
-				decoder.UseNumber()
-				if err := decoder.Decode(&taskList); err == nil {
+				taskList, err := parseTaskData(r.GetString("data"))
+				if err == nil {
 					for _, t := range taskList {
-						var h float64
-						if val, ok := t["time_spent"].(json.Number); ok {
-							h, _ = val.Float64()
-						} else if val, ok := t["time_spent"].(float64); ok {
-							h = val
-						}
-						entry.TotalHours += h
+						entry.TotalHours += getTimeSpent(t["time_spent"])
 						
 						tNum := fmt.Sprintf("%v", t["task_number"])
 						if tNum != "" {
@@ -236,8 +216,7 @@ func main() {
 			for userId, stat := range statsMap {
 				completedCount := 0
 				for _, status := range stat.TaskStatuses {
-					norm := strings.ToLower(strings.TrimSpace(status))
-					if norm == "completed" || norm == "завершена" || norm == "completed_return" || norm == "завершена (возврат)" || norm == "completed_appeal" || norm == "завершена (апелляция)" {
+					if isStatusCompleted(status) {
 						completedCount++
 					}
 				}
@@ -281,13 +260,8 @@ func main() {
 			taskMeta := make(map[string]map[string]string) 
 
 			for _, r := range records {
-				rawJson := r.GetString("data")
-				if rawJson == "" { continue }
-
-				var taskList []map[string]interface{}
-				decoder := json.NewDecoder(strings.NewReader(rawJson))
-				decoder.UseNumber()
-				if err := decoder.Decode(&taskList); err != nil { continue }
+				taskList, err := parseTaskData(r.GetString("data"))
+				if err != nil { continue }
 
 				fileDate := r.GetString("file_date")
 				fileId := r.Id
@@ -307,12 +281,8 @@ func main() {
 			result := []map[string]interface{}{}
 
 			for tNum, task := range latestTasks {
-				statusStr := fmt.Sprintf("%v", task["status"])
-				norm := strings.ToLower(strings.TrimSpace(statusStr))
-
 				// Check strictly for unfinished statuses
-				if norm == "in_progress" || norm == "выполняется" || 
-				   norm == "in_progress_return" || norm == "выполняется (возврат)" {
+				if isStatusInProgress(task["status"]) {
 					
 					if meta, exists := taskMeta[tNum]; exists {
 						task["source_file_date"] = meta["source_file_date"]
@@ -357,13 +327,8 @@ func main() {
 			taskMap := make(map[string]*AggregatedTask)
 
 			for _, r := range records {
-				rawJson := r.GetString("data")
-				if rawJson == "" { continue }
-
-				var taskList []map[string]interface{}
-				decoder := json.NewDecoder(strings.NewReader(rawJson))
-				decoder.UseNumber()
-				if err := decoder.Decode(&taskList); err != nil { continue }
+				taskList, err := parseTaskData(r.GetString("data"))
+				if err != nil { continue }
 
 				fileDate := r.GetString("file_date")
 				fileId := r.Id
@@ -384,10 +349,7 @@ func main() {
 					agg := taskMap[taskNumStr]
 
 					// Sum time_spent
-					if val, ok := t["time_spent"].(json.Number); ok {
-						h, _ := val.Float64()
-						agg.TotalTimeSpent += h
-					}
+					agg.TotalTimeSpent += getTimeSpent(t["time_spent"])
 
 					// Update latest data
 					agg.LatestData = t
@@ -399,13 +361,8 @@ func main() {
 			result := []map[string]interface{}{}
 
 			for _, agg := range taskMap {
-				statusStr := fmt.Sprintf("%v", agg.LatestData["status"])
-				norm := strings.ToLower(strings.TrimSpace(statusStr))
-
 				// Check strictly for COMPLETED statuses
-				if norm == "completed" || norm == "завершена" || 
-				   norm == "completed_return" || norm == "завершена (возврат)" ||
-				   norm == "completed_appeal" || norm == "завершена (апелляция)" {
+				if isStatusCompleted(agg.LatestData["status"]) {
 					
 					agg.LatestData["time_spent"] = agg.TotalTimeSpent
 					agg.LatestData["source_file_date"] = agg.LatestFileDate
@@ -444,13 +401,8 @@ func main() {
 			taskMeta := make(map[string]map[string]string) 
 
 			for _, r := range records {
-				rawJson := r.GetString("data")
-				if rawJson == "" { continue }
-
-				var taskList []map[string]interface{}
-				decoder := json.NewDecoder(strings.NewReader(rawJson))
-				decoder.UseNumber()
-				if err := decoder.Decode(&taskList); err != nil { continue }
+				taskList, err := parseTaskData(r.GetString("data"))
+				if err != nil { continue }
 
 				fileDate := r.GetString("file_date")
 				fileId := r.Id
@@ -470,11 +422,8 @@ func main() {
 			result := []map[string]interface{}{}
 
 			for tNum, task := range latestTasks {
-				statusStr := fmt.Sprintf("%v", task["status"])
-				norm := strings.ToLower(strings.TrimSpace(statusStr))
-
 				// Check strictly for RETURNED statuses (In Progress Return only)
-				if norm == "in_progress_return" || norm == "выполняется (возврат)" {
+				if isStatusInProgressReturn(task["status"]) {
 					
 					if meta, exists := taskMeta[tNum]; exists {
 						task["source_file_date"] = meta["source_file_date"]
@@ -521,15 +470,9 @@ func main() {
 				return e.NotFoundError("Record not found", err)
 			}
 
-			rawJson := record.GetString("data")
-			var taskList []map[string]interface{}
-			
-			if rawJson != "" {
-				decoder := json.NewDecoder(strings.NewReader(rawJson))
-				decoder.UseNumber()
-				if err := decoder.Decode(&taskList); err != nil {
-					return e.InternalServerError("Failed to parse task data", err)
-				}
+			taskList, err := parseTaskData(record.GetString("data"))
+			if err != nil {
+				return e.InternalServerError("Failed to parse task data", err)
 			}
 
 			found := false
@@ -542,10 +485,7 @@ func main() {
 					found = true
 					
 					// Get current time
-					var currentTime float64
-					if val, ok := t["time_spent"].(json.Number); ok {
-						currentTime, _ = val.Float64()
-					}
+					currentTime := getTimeSpent(t["time_spent"])
 
 					// Update logic
 					if currentTime != data.NewTime {
@@ -852,4 +792,52 @@ func bootstrapCollections(app *pocketbase.PocketBase) error {
 	}
 
 	return nil
+}
+
+// --- Helpers ---
+
+func parseTaskData(jsonStr string) ([]map[string]interface{}, error) {
+	if jsonStr == "" {
+		return []map[string]interface{}{}, nil
+	}
+	var taskList []map[string]interface{}
+	decoder := json.NewDecoder(strings.NewReader(jsonStr))
+	decoder.UseNumber()
+	if err := decoder.Decode(&taskList); err != nil {
+		return nil, err
+	}
+	return taskList, nil
+}
+
+func getTimeSpent(v interface{}) float64 {
+	if val, ok := v.(json.Number); ok {
+		f, _ := val.Float64()
+		return f
+	}
+	if val, ok := v.(float64); ok {
+		return val
+	}
+	return 0
+}
+
+func normalizeStatus(status interface{}) string {
+	return strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", status)))
+}
+
+func isStatusCompleted(status interface{}) bool {
+	norm := normalizeStatus(status)
+	return norm == "completed" || norm == "завершена" ||
+		norm == "completed_return" || norm == "завершена (возврат)" ||
+		norm == "completed_appeal" || norm == "завершена (апелляция)"
+}
+
+func isStatusInProgress(status interface{}) bool {
+	norm := normalizeStatus(status)
+	return norm == "in_progress" || norm == "выполняется" ||
+		norm == "in_progress_return" || norm == "выполняется (возврат)"
+}
+
+func isStatusInProgressReturn(status interface{}) bool {
+	norm := normalizeStatus(status)
+	return norm == "in_progress_return" || norm == "выполняется (возврат)"
 }
