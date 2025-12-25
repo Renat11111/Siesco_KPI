@@ -3,27 +3,32 @@
     {
       "title": "Завершена",
       "slug": "completed",
-      "color": "success"
+      "color": "success",
+      "type": "final"
     },
     {
       "title": "Завершена (возврат)",
       "slug": "completed_return",
-      "color": "warning"
+      "color": "warning",
+      "type": "final"
     },
     {
       "title": "Завершена (апелляция)",
       "slug": "completed_appeal",
-      "color": "primary"
+      "color": "primary",
+      "type": "final"
     },
     {
       "title": "Выполняется",
       "slug": "in_progress",
-      "color": "info"
+      "color": "info",
+      "type": "in_progress"
     },
     {
       "title": "Выполняется (возврат)",
       "slug": "in_progress_return",
-      "color": "warning"
+      "color": "warning",
+      "type": "return"
     }
   ],
   "task_fields": [

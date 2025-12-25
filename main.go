@@ -20,7 +20,11 @@ type StatusConfig struct {
 	Title string `json:"title"`
 	Slug  string `json:"slug"`
 	Color string `json:"color"`
+	Type  string `json:"type"` // "final", "in_progress", "return"
 }
+
+// Global map to store status types for helper functions
+var GlobalStatusMap = make(map[string]string)
 
 type TaskFieldConfig struct {
 	Key        string `json:"key"`
@@ -362,7 +366,10 @@ func main() {
 			}
 
 			if updated {
-				newJsonBytes, _ := json.Marshal(taskList)
+				newJsonBytes, err := json.Marshal(taskList)
+				if err != nil {
+					return e.InternalServerError("Failed to serialize updated data", err)
+				}
 				record.Set("data", string(newJsonBytes))
 				if err := app.Save(record); err != nil {
 					return e.InternalServerError("Failed to save record", err)
@@ -581,6 +588,12 @@ func bootstrapCollections(app *pocketbase.PocketBase) error {
 		var appConfig AppConfig
 		json.Unmarshal(bytes, &appConfig)
 
+		// Populate global map with both Slug and Title for flexible lookup
+		for _, s := range appConfig.Statuses {
+			GlobalStatusMap[strings.ToLower(strings.TrimSpace(s.Slug))] = s.Type
+			GlobalStatusMap[strings.ToLower(strings.TrimSpace(s.Title))] = s.Type
+		}
+
 		statusesCollection, err := app.FindCollectionByNameOrId("statuses")
 		if err != nil {
 			statusesCollection = core.NewBaseCollection("statuses")
@@ -690,14 +703,17 @@ func streamYearlyRanking(app *pocketbase.PocketBase, year string) (interface{}, 
 
 		// Use our helper
 		taskList, err := parseTaskData(dataJson)
-		if err == nil {
-			for _, t := range taskList {
-				entry.TotalHours += getTimeSpent(t["time_spent"])
-				
-				tNum := fmt.Sprintf("%v", t["task_number"])
-				if tNum != "" {
-					entry.TaskStatuses[tNum] = fmt.Sprintf("%v", t["status"])
-				}
+		if err != nil {
+			log.Printf("Error parsing streamed task data for user %s: %v", userId, err)
+			continue
+		}
+
+		for _, t := range taskList {
+			entry.TotalHours += getTimeSpent(t["time_spent"])
+			
+			tNum := fmt.Sprintf("%v", t["task_number"])
+			if tNum != "" {
+				entry.TaskStatuses[tNum] = fmt.Sprintf("%v", t["status"])
 			}
 		}
 	}
@@ -774,20 +790,33 @@ func normalizeStatus(status interface{}) string {
 
 func isStatusCompleted(status interface{}) bool {
 	norm := normalizeStatus(status)
-	return norm == "completed" || norm == "завершена" ||
-		norm == "completed_return" || norm == "завершена (возврат)" ||
-		norm == "completed_appeal" || norm == "завершена (апелляция)"
+	t, exists := GlobalStatusMap[norm]
+	if !exists {
+		// Fallback for old records or unspecified config
+		return norm == "completed" || norm == "завершена" ||
+			norm == "completed_return" || norm == "завершена (возврат)" ||
+			norm == "completed_appeal" || norm == "завершена (апелляция)"
+	}
+	return t == "final"
 }
 
 func isStatusInProgress(status interface{}) bool {
 	norm := normalizeStatus(status)
-	return norm == "in_progress" || norm == "выполняется" ||
-		norm == "in_progress_return" || norm == "выполняется (возврат)"
+	t, exists := GlobalStatusMap[norm]
+	if !exists {
+		return norm == "in_progress" || norm == "выполняется" ||
+			norm == "in_progress_return" || norm == "выполняется (возврат)"
+	}
+	return t == "in_progress" || t == "return"
 }
 
 func isStatusInProgressReturn(status interface{}) bool {
 	norm := normalizeStatus(status)
-	return norm == "in_progress_return" || norm == "выполняется (возврат)"
+	t, exists := GlobalStatusMap[norm]
+	if !exists {
+		return norm == "in_progress_return" || norm == "выполняется (возврат)"
+	}
+	return t == "return"
 }
 
 func calculateRankingResponse(app *pocketbase.PocketBase, records []*core.Record) (interface{}, error) {
@@ -813,14 +842,17 @@ func calculateRankingResponse(app *pocketbase.PocketBase, records []*core.Record
 		entry := statsMap[userId]
 
 		taskList, err := parseTaskData(r.GetString("data"))
-		if err == nil {
-			for _, t := range taskList {
-				entry.TotalHours += getTimeSpent(t["time_spent"])
-				
-				tNum := fmt.Sprintf("%v", t["task_number"])
-				if tNum != "" {
-					entry.TaskStatuses[tNum] = fmt.Sprintf("%v", t["status"])
-				}
+		if err != nil {
+			log.Printf("Error parsing task data for record %s: %v", r.Id, err)
+			continue
+		}
+		
+		for _, t := range taskList {
+			entry.TotalHours += getTimeSpent(t["time_spent"])
+			
+			tNum := fmt.Sprintf("%v", t["task_number"])
+			if tNum != "" {
+				entry.TaskStatuses[tNum] = fmt.Sprintf("%v", t["status"])
 			}
 		}
 	}
