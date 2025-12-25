@@ -1,21 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import pb, { getUserFiles } from '../lib/pocketbase';
+import pb, { getUserFiles, clearRankingCache } from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
 import DailyStats from './DailyStats';
 import MonthlyStats from './MonthlyStats';
 import ComparisonStats from './ComparisonStats';
+import { useSettings, TaskField, Status } from '../lib/SettingsContext';
+import { 
+    getFormattedDateForCheck, 
+    validateAndParseExcelRows 
+} from '../lib/excelUtils';
 
 interface TaskUploadProps {
     lang: Language;
-}
-
-interface TaskField {
-    key: string;
-    title: string;
-    type: string;
-    required: boolean;
-    width?: string;
 }
 
 interface User {
@@ -26,6 +23,7 @@ interface User {
 
 export default function TaskUpload({ lang }: TaskUploadProps) {
     const t = translations[lang];
+    const { statuses, fields: taskFields, loading: settingsLoading } = useSettings();
 
     const [uploading, setUploading] = useState(false);
     const [message, setMessage] = useState('');
@@ -33,8 +31,6 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
     const [detailedErrors, setDetailedErrors] = useState<string[]>([]);
     const [dragActive, setDragActive] = useState(false);
     const [refreshStats, setRefreshStats] = useState(0); 
-    const [validStatuses, setValidStatuses] = useState<string[]>([]);
-    const [taskFields, setTaskFields] = useState<TaskField[]>([]);
     
     // Use local date string YYYY-MM-DD to match user's timezone
     const getLocalDate = () => {
@@ -111,30 +107,6 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
                     }
                 }
             }
-
-            try {
-                // Load Statuses
-                const statusRecords = await pb.collection('statuses').getFullList({ requestKey: null });
-                setValidStatuses(statusRecords.map(r => r.title));
-
-                // Load Task Fields
-                const fieldRecords = await pb.collection('task_fields').getFullList({
-                    sort: 'order',
-                    requestKey: null
-                });
-                
-                const fields: TaskField[] = fieldRecords.map(r => ({
-                    key: r.key,
-                    title: r.title,
-                    type: r.type,
-                    required: r.required,
-                    width: r.width
-                }));
-                setTaskFields(fields);
-
-            } catch (err) {
-                console.error("Failed to load initial data", err);
-            }
         };
 
         loadInitialData();
@@ -194,6 +166,7 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
             // 4. Delete original record
             await pb.collection('tasks').delete(record.id);
 
+            clearRankingCache(); // Clear stats cache
             setMessage(`${t.fileDeleted} "${record.file_name}"`);
             setDeletionReason(''); // Clear reason
             setRefreshStats(prev => prev + 1); // This will trigger useEffect to reload file list
@@ -235,54 +208,13 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
         inputRef.current?.click();
     };
 
-    const getFormattedDateForCheck = (isoDateString: string) => {
-        if (!isoDateString) return "";
-        const parts = isoDateString.split('-');
-        if (parts.length !== 3) return "";
-        const [year, month, day] = parts;
-        return `${day}.${month}.${year}`;
-    };
-
-    const parseDateStrict = (excelDate: any): string | null => {
-        if (!excelDate) return null;
-        
-        try {
-            if (typeof excelDate === 'number') {
-                 const date = new Date(Math.round((excelDate - 25569)*86400*1000));
-                 if (isNaN(date.getTime())) return null;
-                 return date.toISOString();
-            }
-            if (typeof excelDate === 'string') {
-                const trimmed = excelDate.trim();
-                const parts = trimmed.split('.');
-                if (parts.length === 3) {
-                    const day = parseInt(parts[0], 10);
-                    const month = parseInt(parts[1], 10) - 1;
-                    const year = parseInt(parts[2], 10);
-                    
-                    const d = new Date(year, month, day);
-                    if (d.getFullYear() === year && d.getMonth() === month && d.getDate() === day) {
-                        d.setHours(12); 
-                        return d.toISOString();
-                    }
-                }
-                
-                const d = new Date(excelDate);
-                if (!isNaN(d.getTime())) return d.toISOString();
-            }
-        } catch (e) {
-            return null;
-        }
-        return null;
-    };
-
     const processFile = (file: File) => {
         setUploading(true);
         setMessage(t.validating);
         setError('');
         setDetailedErrors([]);
 
-        if (validStatuses.length === 0 || taskFields.length === 0) {
+        if (statuses.length === 0 || taskFields.length === 0) {
             setError("Configuration error: Initial data not loaded. Refresh the page.");
             setUploading(false);
             if (inputRef.current) inputRef.current.value = '';
@@ -297,7 +229,30 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
             return;
         }
 
+        // --- SUPERADMIN CONFIRMATION ---
+        const user = pb.authStore.record;
+        const targetUserId = selectedUserId || user?.id;
+        
+        if (isSuperAdmin && user && targetUserId !== user.id) {
+            const targetUserName = users.find(u => u.id === targetUserId)?.name || targetUserId || "Unknown";
+            const confirmMsg = t.confirmUploadForOther as string;
+            if (confirmMsg) {
+                const confirmed = window.confirm(confirmMsg.replace("{name}", targetUserName));
+                if (!confirmed) {
+                    setUploading(false);
+                    if (inputRef.current) inputRef.current.value = '';
+                    return;
+                }
+            }
+        }
+
         setMessage(t.reading);
+
+        if (statuses.length === 0 || taskFields.length === 0) {
+            setError("Configuration error: Settings not loaded yet. Please wait.");
+            setUploading(false);
+            return;
+        }
 
         const reader = new FileReader();
         reader.onload = async (evt) => {
@@ -315,135 +270,29 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
                 }
 
                 // Read all data
-                const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
+                const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
                 
-                if (data.length < 2) {
-                    throw new Error("Sheet appears to be empty or missing data rows.");
+                // Use universal helper for parsing and validation
+                const { parsedTasks, validationErrors } = validateAndParseExcelRows(
+                    data, 
+                    taskFields, 
+                    statuses, 
+                    fileDate, 
+                    t
+                );
+
+                if (validationErrors.length > 0) {
+                    setError(t.validationFailed);
+                    setDetailedErrors(validationErrors);
+                    setUploading(false);
+                    if (inputRef.current) inputRef.current.value = '';
+                    return;
                 }
 
-                // 1. Analyze Headers (Row 1)
-                const headers = (data[0] as any[]).map(h => h?.toString().trim().toLowerCase());
-                const columnMapping: Record<string, number> = {}; // fieldKey -> columnIndex
-
-                // Map fields to columns
-                taskFields.forEach(field => {
-                    const targetTitle = field.title.toLowerCase();
-                    const index = headers.findIndex(h => h === targetTitle);
-                    if (index !== -1) {
-                        columnMapping[field.key] = index;
-                    }
-                });
-
-                console.log("DEBUG: Task Fields:", taskFields);
-                console.log("DEBUG: Excel Headers:", headers);
-                console.log("DEBUG: Column Mapping:", columnMapping);
-
-                // 2. Validate Structure (Check required columns)
-                const missingFields = taskFields
-                    .filter(f => f.required && columnMapping[f.key] === undefined)
-                    .map(f => f.title);
-
-                if (missingFields.length > 0) {
-                    throw new Error(`Missing required columns in Excel: ${missingFields.join(", ")}`);
-                }
-
-                const rows = data.slice(1);
                 const user = pb.authStore.record;
                 if (!user) {
                     throw new Error(t.mustLogin);
                 }
-
-                const parsedTasks: any[] = [];
-                const validationErrors: string[] = [];
-
-                rows.forEach((row, index) => {
-                    const rowIndex = index + 2; 
-                    const r = row as any[];
-                    
-                    if (!r || r.length === 0) return; 
-
-                    // Check if row is effectively empty (all mapped columns are empty)
-                    const isEmpty = Object.values(columnMapping).every(colIdx => {
-                        const val = r[colIdx];
-                        return val === undefined || val === null || val.toString().trim() === '';
-                    });
-                    if (isEmpty) return;
-
-                    const taskData: any = {};
-                    let rowIsValid = true;
-
-                    // Iterate through ALL defined fields
-                    taskFields.forEach((field) => {
-                        if (!rowIsValid) return;
-
-                        const colIdx = columnMapping[field.key];
-                        
-                        // If column not found (and optional), skip or set default
-                        if (colIdx === undefined) {
-                            if (field.type === 'number') taskData[field.key] = 0;
-                            else taskData[field.key] = "";
-                            return;
-                        }
-
-                        let rawValue = r[colIdx];
-                        let finalValue: any = rawValue;
-
-                        // 1. Check Required Value (Cell level)
-                        if (field.required) {
-                            if (rawValue === undefined || rawValue === null || rawValue.toString().trim() === "") {
-                                validationErrors.push(`${t.row} ${rowIndex}: '${field.title}' ${t.fieldIsEmpty}`);
-                                rowIsValid = false;
-                                return;
-                            }
-                        }
-
-                        // 2. Type Parsing & Validation
-                        if (field.type === 'number') {
-                            if (rawValue !== undefined && rawValue !== null && rawValue.toString().trim() !== "") {
-                                const str = rawValue.toString().trim().replace(',', '.');
-                                const num = Number(str);
-                                if (isNaN(num)) {
-                                    validationErrors.push(`${t.row} ${rowIndex}: '${field.title}' ("${rawValue}") ${t.mustBeNumber}`);
-                                    rowIsValid = false;
-                                    return;
-                                }
-                                finalValue = num;
-                            } else {
-                                finalValue = 0; // Default for numbers
-                            }
-                        } 
-                        else if (field.type === 'date') {
-                            const parsedDate = parseDateStrict(rawValue);
-                            if (field.required && !parsedDate) {
-                                validationErrors.push(`${t.row} ${rowIndex}: '${field.title}' ("${rawValue}") ${t.mustBeNumber}`); // Using same error for bad date
-                                rowIsValid = false;
-                                return;
-                            }
-                            finalValue = parsedDate || new Date(fileDate).toISOString();
-                        }
-                        else if (field.type === 'select') {
-                            const strVal = rawValue?.toString().trim();
-                            if (field.key === 'status') { // Specific validation for status field
-                                if (strVal && !validStatuses.includes(strVal)) {
-                                    validationErrors.push(`${t.row} ${rowIndex}: '${field.title}' ("${strVal}") - ${t.invalidValue}.`);
-                                    rowIsValid = false;
-                                    return;
-                                }
-                            }
-                            finalValue = strVal || "";
-                        }
-                        else {
-                            // Text
-                            finalValue = rawValue?.toString().trim() || "";
-                        }
-
-                        taskData[field.key] = finalValue;
-                    });
-
-                    if (rowIsValid) {
-                        parsedTasks.push(taskData);
-                    }
-                });
 
                 if (validationErrors.length > 0) {
                     setError(t.validationFailed);
@@ -506,6 +355,7 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
                 setMessage(`${t.uploadingMsg} (${parsedTasks.length} ${t.tasksCount})...`);
 
                 await pb.collection('tasks').create(formData);
+                clearRankingCache(); // Clear stats cache
 
                 // --- AUDIT LOG FOR SUPERADMIN UPLOADS ---
                 if (isSuperAdmin && user) {

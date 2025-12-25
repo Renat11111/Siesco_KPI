@@ -56,6 +56,33 @@ func main() {
 				e.Record.Set("user", e.Auth.Id)
 			}
 
+			// 1. Проверка пересечения дат (Критическая уязвимость)
+			newStart := e.Record.GetString("start_date")
+			newEnd := e.Record.GetString("end_date")
+			userId := e.Record.GetString("user")
+
+			// Ищем не отклоненные заявки, пересекающиеся с новым периодом
+			existing, err := app.FindRecordsByFilter(
+				"leave_requests",
+				"user = {:user} && status != 'rejected' && start_date <= {:newEnd} && end_date >= {:newStart}",
+				"",
+				1, 0,
+				map[string]interface{}{
+					"user":     userId,
+					"newStart": newStart,
+					"newEnd":   newEnd,
+				},
+			)
+
+			if err != nil {
+				return fmt.Errorf("failed to check for overlaps: %w", err)
+			}
+
+			if len(existing) > 0 {
+				// Возвращаем ошибку, которую фронтенд сможет отобразить
+				return e.BadRequestError("You already have an active leave request for this period (overlapping dates)", nil)
+			}
+
 			if err := e.Next(); err != nil {
 				return err
 			}

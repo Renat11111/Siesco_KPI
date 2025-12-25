@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import pb, { getMonthlyRanking } from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
 import { getColor } from '../lib/colors'; // Импортируем getColor
@@ -18,7 +18,7 @@ interface UserStat {
 
 export default function ColleagueRankingChart({ lang }: ColleagueRankingChartProps) {
     const t = translations[lang];
-    const [rankingData, setRankingData] = useState<UserStat[]>([]);
+    const [rankingData, setRankingData] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [maxHours, setMaxHours] = useState(10);
 
@@ -38,25 +38,13 @@ export default function ColleagueRankingChart({ lang }: ColleagueRankingChartPro
 
             // Fetch calculated stats from backend
             const records = await getMonthlyRanking(monthStr);
-
-            // Map to component state
-            const result: UserStat[] = records.map(r => ({
-                id: r.user_id,
-                name: r.user_name || r.user_email || 'Unknown',
-                email: r.user_email,
-                totalHours: r.total_hours,
-                completedTasks: r.completed_tasks,
-                isCurrentUser: r.user_id === currentUser.id
-            }));
-
-            // Sort logic: Backend usually sorts by Hours, but let's ensure it.
-            result.sort((a, b) => b.totalHours - a.totalHours);
+            setRankingData(records);
 
             // Determine max for scaling
-            const max = result.length > 0 ? result[0].totalHours : 10;
-
-            setRankingData(result);
-            setMaxHours(max);
+            if (records.length > 0) {
+                const sorted = [...records].sort((a, b) => b.total_hours - a.total_hours);
+                setMaxHours(sorted[0].total_hours || 10);
+            }
 
         } catch (err) {
             console.error("Ranking fetch error:", err);
@@ -65,10 +53,25 @@ export default function ColleagueRankingChart({ lang }: ColleagueRankingChartPro
         }
     };
 
+    const sortedData = useMemo(() => {
+        const currentUser = pb.authStore.record;
+        if (!currentUser) return [];
+
+        return rankingData
+            .map(r => ({
+                id: r.user_id,
+                name: r.user_name || r.user_email || 'Unknown',
+                email: r.user_email,
+                totalHours: r.total_hours,
+                completedTasks: r.completed_tasks,
+                isCurrentUser: r.user_id === currentUser.id
+            }))
+            .sort((a, b) => b.totalHours - a.totalHours);
+    }, [rankingData]);
+
     // --- Visualization Config ---
     const barHeight = 36;
     const gap = 12;
-    const chartHeight = rankingData.length * (barHeight + gap) + 20; // Dynamic height
     const maxBarWidth = 100; // Percentage
 
     return (
@@ -85,14 +88,14 @@ export default function ColleagueRankingChart({ lang }: ColleagueRankingChartPro
                      <div style={{textAlign: 'center', color: 'var(--text-muted)', padding: '2rem'}}>
                         {t.loading}
                     </div>
-                ) : rankingData.length === 0 ? (
+                ) : sortedData.length === 0 ? (
                     <div style={{textAlign: 'center', color: 'var(--text-muted)', padding: '1rem'}}>
                         No data available.
                     </div>
                 ) : (
                     <div style={{maxHeight: '400px', overflowY: 'auto', paddingRight: '8px'}}> {/* Scroll container for ranking */}
                         <div style={{display: 'flex', flexDirection: 'column', gap: `${gap}px`}}>
-                            {rankingData.map((user, index) => {
+                            {sortedData.map((user, index) => {
                                 const widthPercent = maxHours > 0 ? (user.totalHours / maxHours) * 100 : 0;
                                 const isCurrent = user.isCurrentUser;
                                 

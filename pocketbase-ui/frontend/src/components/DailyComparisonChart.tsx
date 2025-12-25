@@ -170,36 +170,47 @@ export default function DailyComparisonChart({ lang, refreshTrigger }: DailyComp
                     </div>
                 ) : (
                     <>
-                        {/* Tooltip HTML Overlay */}
-                        {activeData && (
-                            <div style={{
-                                position: 'absolute',
-                                left: `${(getX(activeData.day) / width) * 100}%`,
-                                top: '0', 
-                                transform: `translateX(${activeData.day > 25 ? '-110%' : '10%'})`, // Move tooltip left if near right edge
-                                background: 'rgba(255, 255, 255, 0.95)',
-                                border: '1px solid var(--border)',
-                                padding: '8px 12px',
-                                borderRadius: '8px',
-                                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                                pointerEvents: 'none',
-                                zIndex: 10,
-                                fontSize: '0.8rem',
-                                minWidth: '120px'
-                            }}>
-                                <div style={{fontWeight: 700, marginBottom: '4px', borderBottom: '1px solid #eee', paddingBottom: '2px'}}>
-                                    {t.colDate}: {activeData.day}
-                                </div>
-                                <div style={{display: 'flex', justifyContent: 'space-between', color: getColor('primary')}}>
-                                    <span>{t.legendCurrent}:</span>
-                                    <strong>{activeData.current}</strong>
-                                </div>
-                                <div style={{display: 'flex', justifyContent: 'space-between', color: getColor('warning')}}>
-                                    <span>{t.legendPrev}:</span>
-                                    <strong>{activeData.prev}</strong>
-                                </div>
+            {/* Tooltip */}
+            <div style={{
+                position: 'absolute',
+                top: activeData ? getY(activeData.current) - 70 : 0,
+                left: activeData ? (getX(activeData.day) / width) * 100 + '%' : '0',
+                transform: `translateX(-50%) ${activeData ? 'translateY(0)' : 'translateY(5px)'}`,
+                backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                border: '1px solid #e2e8f0',
+                borderRadius: '8px',
+                padding: '8px 12px',
+                boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+                pointerEvents: 'none',
+                zIndex: 100,
+                minWidth: '120px',
+                transition: 'opacity 0.2s ease-in-out, transform 0.2s ease-out, left 0.1s ease-out, top 0.1s ease-out',
+                opacity: activeData ? 1 : 0
+            }}>
+                {activeData && (
+                    <>
+                        <div style={{fontSize: '0.7rem', color: '#64748b', marginBottom: '4px', fontWeight: 600}}>
+                            {activeData.day} {t.statsChartTitle.includes('месяц') ? '' : ''}
+                        </div>
+                        <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
+                            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem'}}>
+                                <span style={{display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem'}}>
+                                    <span style={{width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#3b82f6'}}></span>
+                                    {t.legendCurrent}:
+                                </span>
+                                <span style={{fontWeight: 700, fontSize: '0.8rem'}}>{activeData.current.toFixed(1)}ч</span>
                             </div>
-                        )}
+                            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem'}}>
+                                <span style={{display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem'}}>
+                                    <span style={{width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#94a3b8'}}></span>
+                                    {t.legendPrev}:
+                                </span>
+                                <span style={{fontWeight: 700, fontSize: '0.8rem'}}>{activeData.prev.toFixed(1)}ч</span>
+                            </div>
+                        </div>
+                    </>
+                )}
+            </div>
 
                         <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{width: '100%', height: '100%', overflow: 'visible'}}>
                             {/* Grid Lines */}

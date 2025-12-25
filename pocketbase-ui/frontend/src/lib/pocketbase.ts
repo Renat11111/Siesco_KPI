@@ -1,4 +1,4 @@
-import PocketBase from 'pocketbase';
+import PocketBase, { ClientResponseError } from 'pocketbase';
 
 const pb = new PocketBase('http://127.0.0.1:8090');
 
@@ -10,16 +10,51 @@ export interface RankingItem {
     completed_tasks: number;
 }
 
+// Умное кэширование рейтингов
+const rankingCache = new Map<string, RankingItem[]>();
+
+export const clearRankingCache = () => {
+    console.log("Invalidating ranking cache...");
+    rankingCache.clear();
+};
+
 export const getMonthlyRanking = async (month: string): Promise<RankingItem[]> => {
-    return await pb.send<RankingItem[]>('/api/kpi/ranking', {
+    const cacheKey = `monthly_${month}`;
+    if (rankingCache.has(cacheKey)) {
+        return rankingCache.get(cacheKey)!;
+    }
+
+    const data = await pb.send<RankingItem[]>('/api/kpi/ranking', {
         params: { month }
     });
+    
+    rankingCache.set(cacheKey, data);
+    return data;
 };
 
 export const getYearlyRanking = async (year: string): Promise<RankingItem[]> => {
-    return await pb.send<RankingItem[]>('/api/kpi/yearly-ranking', {
+    const cacheKey = `yearly_${year}`;
+    if (rankingCache.has(cacheKey)) {
+        return rankingCache.get(cacheKey)!;
+    }
+
+    const data = await pb.send<RankingItem[]>('/api/kpi/yearly-ranking', {
         params: { year }
     });
+
+    rankingCache.set(cacheKey, data);
+    return data;
+};
+
+// Унифицированный обработчик ошибок API
+export const handleApiError = (error: any, t: any): string => {
+    if (error instanceof ClientResponseError) {
+        if (error.status === 401) return t.unauthorizedError || "Unauthorized";
+        if (error.status === 403) return t.forbiddenError || "Forbidden";
+        if (error.status === 404) return t.notFoundError || "Not Found";
+        return error.message;
+    }
+    return t.genericError || "An unexpected error occurred";
 };
 
 export const getActualTasks = async (start: string, end: string, userId?: string): Promise<any[]> => {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import pb from '../lib/pocketbase';
+import pb, { handleApiError } from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
 
 interface LeaveRequestsProps {
@@ -108,26 +108,45 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
             setMessage(t.requestSubmitted);
             setStartDate(''); setEndDate(''); setReason('');
         } catch (err: any) {
-            setError(err.message);
+            // Check for specific overlap message from server
+            if (err.message?.includes("overlapping dates")) {
+                setError(t.errorOverlap);
+            } else {
+                setError(handleApiError(err, t));
+            }
         } finally {
             setSubmitting(false);
         }
     };
 
     const handleDelete = async (id: string) => {
+        const record = requests.find(r => r.id === id);
+        if (!record) return;
+
+        // Security: only owner (if pending) or admin can delete
+        const isOwner = record.user === user?.id;
+        if (!isAdmin && (!isOwner || record.status !== 'pending')) {
+            alert("Access denied");
+            return;
+        }
+
         if (!window.confirm(t.confirmDeleteRequest)) return;
         try {
             await pb.collection('leave_requests').delete(id);
         } catch (err: any) {
-            alert(err.message);
+            alert(handleApiError(err, t));
         }
     };
 
     const handleStatusChange = async (id: string, newStatus: string) => {
+        if (!isAdmin) {
+            alert("Access denied");
+            return;
+        }
         try {
             await pb.collection('leave_requests').update(id, { status: newStatus });
         } catch (err: any) {
-            alert(err.message);
+            alert(handleApiError(err, t));
             fetchRequests();
         }
     };

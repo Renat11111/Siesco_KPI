@@ -2,45 +2,36 @@ import { useEffect, useState } from 'react';
 import pb from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
 import { getColor } from '../lib/colors';
+import { useSettings } from '../lib/SettingsContext';
 
 interface DailyStatsProps {
     lang: Language;
     refreshTrigger: number; 
 }
 
-interface StatusDefinition {
-    title: string;
-    color: string;
-}
-
 export default function DailyStats({ lang, refreshTrigger }: DailyStatsProps) {
     const t = translations[lang];
+    const { statuses, loading: settingsLoading } = useSettings();
     const [stats, setStats] = useState<Record<string, number>>({});
     const [totalHoursSpent, setTotalHoursSpent] = useState<number>(0); 
     const [loading, setLoading] = useState(false);
-    const [statusList, setStatusList] = useState<StatusDefinition[]>([]);
 
     useEffect(() => {
         fetchDailyStats();
-    }, [refreshTrigger]);
+    }, [refreshTrigger, statuses]); // Refresh stats when statuses change or trigger fires
 
     const fetchDailyStats = async () => {
         const user = pb.authStore.record;
-        if (!user) return;
+        if (!user || statuses.length === 0) return;
 
         setLoading(true);
-        console.log("Fetching daily stats...");
         
         try {
-            // 1. Load dynamic statuses configuration
-            const statusRecords = await pb.collection('statuses').getFullList({ requestKey: null });
-            console.log("Statuses loaded:", statusRecords);
-            
-            const definitions: StatusDefinition[] = statusRecords.map(r => ({
-                title: r.title,
-                color: getColor(r.color) // Transform status name/code to Hex
+            // 1. Prepare definitions from global context
+            const definitions = statuses.map(s => ({
+                title: s.title,
+                color: getColor(s.color)
             }));
-            setStatusList(definitions);
 
             // 2. Load tasks for today
             const now = new Date();
@@ -51,9 +42,8 @@ export default function DailyStats({ lang, refreshTrigger }: DailyStatsProps) {
                 filter: `user = "${user.id}" && file_date >= "${startOfDay.toISOString()}" && file_date <= "${endOfDay.toISOString()}"`,
                 requestKey: null
             });
-            console.log("Tasks loaded:", records.length);
 
-            // 3. Calculate stats based on dynamic definitions
+            // 3. Calculate stats
             const counts: Record<string, number> = {};
             definitions.forEach(s => counts[s.title] = 0);
             
@@ -63,8 +53,8 @@ export default function DailyStats({ lang, refreshTrigger }: DailyStatsProps) {
                 if (Array.isArray(record.data)) {
                     record.data.forEach((task: any) => {
                         const status = task.status?.trim();
-                        // Check if this status exists in our definitions
-                        if (definitions.some(d => d.title === status)) {
+                        // Matching by Title (as stored in Excel data)
+                        if (counts.hasOwnProperty(status)) {
                             counts[status] = (counts[status] || 0) + 1;
                         }
                         const hours = Number(task.time_spent);
@@ -141,23 +131,23 @@ export default function DailyStats({ lang, refreshTrigger }: DailyStatsProps) {
                                 </tr>
                             </thead>
                             <tbody>
-                                {statusList.map(statusDef => (
-                                    <tr key={statusDef.title}>
+                                {statuses.map(s => (
+                                    <tr key={s.id}>
                                         <td style={tdStyle}>
                                             <span style={{display: 'inline-flex', alignItems: 'center', gap: '8px'}}>
-                                                <span style={{width: '10px', height: '10px', borderRadius: '50%', backgroundColor: statusDef.color}}></span>
-                                                {statusDef.title}
+                                                <span style={{width: '10px', height: '10px', borderRadius: '50%', backgroundColor: getColor(s.color)}}></span>
+                                                {s.title}
                                             </span>
                                         </td>
                                         <td style={{...tdStyle, textAlign: 'right'}}>
-                                            <span style={{...countStyle, fontSize: '0.9rem'}}>{stats[statusDef.title] || 0}</span>
+                                            <span style={{...countStyle, fontSize: '0.9rem'}}>{stats[s.title] || 0}</span>
                                         </td>
                                     </tr>
                                 ))}
                                 <tr style={{borderTop: '2px solid var(--border)'}}>
                                     <td style={{...tdStyle, fontWeight: 700, paddingTop: '4px'}}>{t.statsTotal}</td>
                                     <td style={{...tdStyle, textAlign: 'right', fontWeight: 700, fontSize: '1.1rem', paddingTop: '4px'}}>
-                                        {statusList.reduce((acc, s) => acc + (stats[s.title] || 0), 0)}
+                                        {statuses.reduce((acc, s) => acc + (stats[s.title] || 0), 0)}
                                     </td>
                                 </tr>
                                 <tr style={{borderTop: '1px solid var(--border)'}}>

@@ -89,6 +89,7 @@ export interface TranslationKeys {
     legendCurrent: string;
     legendPrev: string;
     genericError: string;
+    confirmUploadForOther: string;
     onlySuperusers: string;
 
     // Time Off
@@ -108,6 +109,7 @@ export interface TranslationKeys {
     requestDeleted: string;
     errorPastDate: string;
     errorEndDate: string;
+    errorOverlap: string;
     filterPeriod: string;
 }
 
@@ -213,6 +215,7 @@ export const translations: Record<Language, TranslationKeys> = {
 
         // Errors
         genericError: "Произошла ошибка",
+        confirmUploadForOther: "Вы уверены, что хотите загрузить файл от имени {name}?",
         onlySuperusers: "Только суперпользователи могут менять статус супер-админа",
 
         // Time Off
@@ -232,6 +235,7 @@ export const translations: Record<Language, TranslationKeys> = {
         requestDeleted: "Запрос удален",
         errorPastDate: "Дата начала не может быть в прошлом",
         errorEndDate: "Дата окончания не может быть раньше даты начала",
+        errorOverlap: "У вас уже есть активная заявка на этот период (даты пересекаются)",
         filterPeriod: "Период",
     },
     az: {
@@ -335,6 +339,7 @@ export const translations: Record<Language, TranslationKeys> = {
 
         // Errors
         genericError: "Xəta baş verdi",
+        confirmUploadForOther: "{name} adına fayl yükləmək istədiyinizə əminsiniz?",
         onlySuperusers: "Yalnız super istifadəçilər statusu dəyişə bilər",
 
         // Time Off
@@ -354,6 +359,7 @@ export const translations: Record<Language, TranslationKeys> = {
         requestDeleted: "Sorğu silindi",
         errorPastDate: "Başlanğıc tarixi keçmişdə ola bilməz",
         errorEndDate: "Bitmə tarixi başlanğıc tarixindən əvvəl ola bilməz",
+        errorOverlap: "Bu dövr üçün artıq aktiv icazə sorğunuz var (tarixlər üst-üstə düşür)",
         filterPeriod: "Dövr",
     },
     en: {
@@ -457,6 +463,7 @@ export const translations: Record<Language, TranslationKeys> = {
 
         // Errors
         genericError: "An error occurred",
+        confirmUploadForOther: "Are you sure you want to upload this file on behalf of {name}?",
         onlySuperusers: "Only superusers can change the superadmin status",
 
         // Time Off
@@ -476,6 +483,7 @@ export const translations: Record<Language, TranslationKeys> = {
         requestDeleted: "Request deleted",
         errorPastDate: "Start date cannot be in the past",
         errorEndDate: "End date cannot be before start date",
+        errorOverlap: "You already have an active leave request for this period (overlapping dates)",
         filterPeriod: "Period",
     }
 };

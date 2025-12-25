@@ -1,22 +1,9 @@
 import { useEffect, useState, useMemo } from 'react';
-import pb, { getActualTasks } from '../lib/pocketbase';
+import pb, { getActualTasks, clearRankingCache } from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
 import { getColor } from '../lib/colors';
-
-interface TaskField {
-    key: string;
-    title: string;
-    type: string;
-    width: string;
-    filterable: boolean;
-    order: number; // Added order
-}
-
-interface Status {
-    title: string;
-    slug: string;
-    color: string;
-}
+import { useSettings, TaskField, Status } from '../lib/SettingsContext';
+import { useTaskFilters } from '../hooks/useTaskFilters';
 
 interface User {
     id: string;
@@ -36,10 +23,9 @@ interface TaskListProps {
 
 export default function TaskList({ lang }: TaskListProps) {
     const t = translations[lang];
+    const { statuses, fields, loading: settingsLoading } = useSettings();
 
     const [tasks, setTasks] = useState<Task[]>([]);
-    const [fields, setFields] = useState<TaskField[]>([]);
-    const [statuses, setStatuses] = useState<Status[]>([]);
     
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -47,18 +33,25 @@ export default function TaskList({ lang }: TaskListProps) {
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     
-    // Dynamic filters for each field: key -> value
-    const [filters, setFilters] = useState<Record<string, string>>({});
-    
-    // State to manage open/close of multi-select dropdowns
-    const [openDropdowns, setOpenDropdowns] = useState<Record<string, boolean>>({});
-
     // --- Admin/Coordinator Logic ---
     const [isAdminOrCoordinator, setIsAdminOrCoordinator] = useState(false);
     const [users, setUsers] = useState<User[]>([]);
     const [selectedUserId, setSelectedUserId] = useState<string>('');
     const [showUnfinishedOnly, setShowUnfinishedOnly] = useState(false);
     const [showGroupedCompleted, setShowGroupedCompleted] = useState(false);
+
+    // Use our custom hook for filtering and totals
+    const {
+        filters,
+        handleFilterChange,
+        toggleStatusFilter,
+        clearFilters,
+        openDropdowns,
+        setOpenDropdowns,
+        toggleDropdown,
+        filteredTasks,
+        totals
+    } = useTaskFilters(tasks, fields, statuses, lang);
 
     useEffect(() => {
         const checkUserRole = async () => {
@@ -81,7 +74,6 @@ export default function TaskList({ lang }: TaskListProps) {
         };
 
         checkUserRole();
-        loadConfig();
         
         const now = new Date();
         const start = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -102,37 +94,6 @@ export default function TaskList({ lang }: TaskListProps) {
         
         fetchTasks(initialStartDate, initialEndDate, pb.authStore.record?.id, false, false); // Default to history mode
     }, []);
-
-    const loadConfig = async () => {
-        try {
-            const fieldsRes = await pb.collection('task_fields').getFullList({ sort: 'order' });
-            // Map the response to our interface
-            const mappedFields: TaskField[] = fieldsRes.map((r: any) => ({
-                key: r.key,
-                title: r.title,
-                type: r.type,
-                width: r.width || 'auto',
-                filterable: r.filterable ?? true,
-                order: r.order || 0
-            }));
-
-            // Sort fields by order defined in config/DB
-            mappedFields.sort((a, b) => a.order - b.order);
-
-            setFields(mappedFields);
-
-            const statusesRes = await pb.collection('statuses').getFullList();
-            const mappedStatuses: Status[] = statusesRes.map((r: any) => ({
-                title: r.title,
-                slug: r.slug,
-                color: r.color
-            }));
-            setStatuses(mappedStatuses);
-
-        } catch (e) {
-            console.error("Failed to load config", e);
-        }
-    };
 
     const fetchTasks = async (start = startDate, end = endDate, userIdOverride?: string, unfinishedMode = showUnfinishedOnly, groupedCompletedMode = showGroupedCompleted) => {
         if (!start || !end) return;
@@ -231,113 +192,6 @@ export default function TaskList({ lang }: TaskListProps) {
         fetchTasks(startDate, endDate, newUserId);
     };
 
-    const handleFilterChange = (key: string, value: string) => {
-        setFilters(prev => ({ ...prev, [key]: value }));
-    };
-
-    const toggleStatusFilter = (key: string, slug: string) => {
-        setFilters(prev => {
-            const currentStr = prev[key] || '';
-            let current = currentStr ? currentStr.split(',') : [];
-            
-            if (current.includes(slug)) {
-                current = current.filter(s => s !== slug);
-            } else {
-                current.push(slug);
-            }
-            
-            const newVal = current.join(',');
-            // If empty, remove key to keep state clean
-            if (!newVal) {
-                const { [key]: _, ...rest } = prev;
-                return rest;
-            }
-            return { ...prev, [key]: newVal };
-        });
-    };
-
-    const clearFilters = () => {
-        setFilters({});
-        setOpenDropdowns({});
-    };
-
-    const toggleDropdown = (key: string) => {
-        setOpenDropdowns(prev => {
-            // Close others if needed, or just toggle this one
-            // Let's toggle this one and keep others as is, or close others? 
-            // Simple toggle is fine.
-            return { ...prev, [key]: !prev[key] };
-        });
-    };
-
-    // Filter tasks client-side based on per-field filters
-    const filteredTasks = useMemo(() => {
-        return tasks.filter(task => {
-            return fields.every(field => {
-                const filterVal = filters[field.key];
-                if (!filterVal) return true; // No filter set for this field
-
-                const taskVal = task[field.key];
-                // If filter is set but value is missing, exclude it
-                if (taskVal === null || taskVal === undefined) return false;
-
-                const strVal = String(taskVal).toLowerCase();
-
-                if (field.type === 'select' || field.key === 'status') {
-                    // Multi-select logic: check if task value matches Slug OR Title
-                    const selectedSlugs = filterVal.split(',');
-                    const currentVal = String(taskVal).trim().toLowerCase();
-                    
-                    // Build a list of all valid strings (slugs AND titles) for the selected filters
-                    const validValues = selectedSlugs.flatMap(slug => {
-                        const s = statuses.find(st => st.slug === slug);
-                        return s ? [slug.toLowerCase(), s.title.toLowerCase()] : [slug.toLowerCase()];
-                    });
-
-                    return validValues.includes(currentVal);
-                }
-
-                if (field.type === 'date') {
-                    if (!filterVal) return true;
-                    try {
-                        // Compare against the DISPLAYED date string
-                        const displayedDate = new Date(taskVal).toLocaleDateString(
-                            lang === 'ru' ? 'ru-RU' : (lang === 'az' ? 'az-Latn-AZ' : 'en-US')
-                        );
-                        return displayedDate.includes(filterVal);
-                    } catch (e) {
-                        return false;
-                    }
-                }
-                
-                // Partial match for everything else (text, number)
-                return strVal.includes(filterVal.toLowerCase());
-            });
-        });
-    }, [tasks, filters, fields, lang]); // Added lang to dependency array
-
-    // Calculate totals for numeric fields
-    const totals = useMemo(() => {
-        const acc: Record<string, number> = {};
-        fields.forEach(f => {
-            if (f.type === 'number') {
-                acc[f.key] = 0;
-            }
-        });
-
-        filteredTasks.forEach(task => {
-            fields.forEach(f => {
-                if (f.type === 'number') {
-                    const val = parseFloat(task[f.key]);
-                    if (!isNaN(val)) {
-                        acc[f.key] += val;
-                    }
-                }
-            });
-        });
-        return acc;
-    }, [filteredTasks, fields]);
-
     const handleEditTime = async (task: Task, currentVal: number) => {
         const newValStr = window.prompt(lang === 'ru' ? "Введите новое значение времени (часы):" : "Enter new time value (hours):", String(currentVal));
         if (newValStr === null) return; 
@@ -365,6 +219,7 @@ export default function TaskList({ lang }: TaskListProps) {
                     new_time: newVal
                 }
             });
+            clearRankingCache(); // Clear ranking stats cache
             // Refresh with current params
             fetchTasks(startDate, endDate, undefined, showUnfinishedOnly, showGroupedCompleted);
         } catch (e: any) {
