@@ -55,22 +55,12 @@ func main() {
 				return e.BadRequestError("Month parameter is required (YYYY-MM)", nil)
 			}
 
-			records, err := app.FindRecordsByFilter(
-				"tasks",
-				"file_date >= {:start} && file_date <= {:end}",
-				"+file_date", 
-				10000, 
-				0,     
-				map[string]interface{}{
-					"start": month + "-01 00:00:00",
-					"end":   month + "-31 23:59:59",
-				},
-			)
+			start := month + "-01 00:00:00"
+			end := month + "-31 23:59:59"
+			response, err := streamRanking(app, start, end)
 			if err != nil {
-				return e.InternalServerError("Failed to fetch tasks", err)
+				return e.InternalServerError("Failed to calculate ranking", err)
 			}
-
-			response, _ := calculateRankingResponse(app, records)
 			return e.JSON(200, response)
 		})
 
@@ -81,7 +71,10 @@ func main() {
 				return e.BadRequestError("Year parameter is required (YYYY)", nil)
 			}
 
-			response, err := streamYearlyRanking(app, year)
+			start := year + "-01-01 00:00:00"
+			end := year + "-12-31 23:59:59"
+
+			response, err := streamRanking(app, start, end)
 			if err != nil {
 				return e.InternalServerError("Failed to calculate yearly stats", err)
 			}
@@ -658,10 +651,7 @@ func bootstrapCollections(app *pocketbase.PocketBase) error {
 	return nil
 }
 
-func streamYearlyRanking(app *pocketbase.PocketBase, year string) (interface{}, error) {
-	start := year + "-01-01 00:00:00"
-	end := year + "-12-31 23:59:59"
-
+func streamRanking(app *pocketbase.PocketBase, start, end string) (interface{}, error) {
 	// Raw SQL query to fetch minimal data
 	query := app.DB().NewQuery("SELECT user, data FROM tasks WHERE file_date >= {:start} AND file_date <= {:end} ORDER BY file_date ASC")
 	query.Bind(map[string]interface{}{
@@ -819,79 +809,3 @@ func isStatusInProgressReturn(status interface{}) bool {
 	return t == "return"
 }
 
-func calculateRankingResponse(app *pocketbase.PocketBase, records []*core.Record) (interface{}, error) {
-	type UserStats struct {
-		UserId         string
-		TotalHours     float64
-		TaskStatuses   map[string]string
-	}
-
-	statsMap := make(map[string]*UserStats)
-
-	for _, r := range records {
-		userId := r.GetString("user")
-		if userId == "" { continue }
-
-		if _, exists := statsMap[userId]; !exists {
-			statsMap[userId] = &UserStats{
-				UserId:       userId,
-				TotalHours:   0,
-				TaskStatuses: make(map[string]string),
-			}
-		}
-		entry := statsMap[userId]
-
-		taskList, err := parseTaskData(r.GetString("data"))
-		if err != nil {
-			log.Printf("Error parsing task data for record %s: %v", r.Id, err)
-			continue
-		}
-		
-		for _, t := range taskList {
-			entry.TotalHours += getTimeSpent(t["time_spent"])
-			
-			tNum := fmt.Sprintf("%v", t["task_number"])
-			if tNum != "" {
-				entry.TaskStatuses[tNum] = fmt.Sprintf("%v", t["status"])
-			}
-		}
-	}
-
-	users, _ := app.FindRecordsByFilter("users", "id != ''", "", 1000, 0, nil)
-	userMap := make(map[string]string)
-	emailMap := make(map[string]string)
-	for _, u := range users {
-		userMap[u.Id] = u.GetString("name")
-		emailMap[u.Id] = u.GetString("email")
-	}
-
-	type ResponseItem struct {
-		UserId         string  `json:"user_id"`
-		UserName       string  `json:"user_name"`
-		UserEmail      string  `json:"user_email"`
-		TotalHours     float64 `json:"total_hours"`
-		CompletedTasks int     `json:"completed_tasks"`
-	}
-
-	response := []ResponseItem{}
-
-	for userId, stat := range statsMap {
-		completedCount := 0
-		for _, status := range stat.TaskStatuses {
-			if isStatusCompleted(status) {
-				completedCount++
-			}
-		}
-		name := userMap[userId]
-		if name == "" { name = "Unknown" }
-
-		response = append(response, ResponseItem{
-			UserId:         userId,
-			UserName:       name,
-			UserEmail:      emailMap[userId],
-			TotalHours:     stat.TotalHours,
-			CompletedTasks: completedCount,
-		})
-	}
-	return response, nil
-}
