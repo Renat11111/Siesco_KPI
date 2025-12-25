@@ -29,8 +29,8 @@ func main() {
 		// Custom Endpoint for Monthly Ranking
 		e.Router.GET("/api/kpi/ranking", func(e *core.RequestEvent) error {
 			month := e.Request.URL.Query().Get("month") // Expects "YYYY-MM"
-			if month == "" {
-				return e.BadRequestError("Month parameter is required (YYYY-MM)", nil)
+			if month == "" || !isValidMonth(month) {
+				return e.BadRequestError("Valid Month parameter is required (YYYY-MM)", nil)
 			}
 
 			start := month + "-01 00:00:00"
@@ -45,8 +45,8 @@ func main() {
 		// Custom Endpoint for Yearly Ranking
 		e.Router.GET("/api/kpi/yearly-ranking", func(e *core.RequestEvent) error {
 			year := e.Request.URL.Query().Get("year") // Expects "YYYY"
-			if year == "" {
-				return e.BadRequestError("Year parameter is required (YYYY)", nil)
+			if year == "" || !isValidYear(year) {
+				return e.BadRequestError("Valid Year parameter is required (YYYY)", nil)
 			}
 
 			start := year + "-01-01 00:00:00"
@@ -66,18 +66,11 @@ func main() {
 			end := e.Request.URL.Query().Get("end")
 			targetUser := e.Request.URL.Query().Get("user")
 
-			if start == "" || end == "" {
-				return e.BadRequestError("Start and End dates are required", nil)
+			if start == "" || end == "" || !isValidDateTime(start) || !isValidDateTime(end) {
+				return e.BadRequestError("Valid Start and End dates are required", nil)
 			}
 
-			filter := "file_date >= {:start} && file_date <= {:end}"
-			params := map[string]interface{}{ "start": start, "end": end }
-			if targetUser != "" {
-				filter += " && user = {:user}"
-				params["user"] = targetUser
-			}
-
-			records, err := app.FindRecordsByFilter("tasks", filter, "+file_date", 10000, 0, params)
+			records, err := fetchTasksByDateRange(app, start, end, targetUser)
 			if err != nil {
 				return e.InternalServerError("Failed to fetch tasks", err)
 			}
@@ -127,18 +120,11 @@ func main() {
 			end := e.Request.URL.Query().Get("end")
 			targetUser := e.Request.URL.Query().Get("user")
 
-			if start == "" || end == "" {
-				return e.BadRequestError("Start and End dates are required", nil)
+			if start == "" || end == "" || !isValidDateTime(start) || !isValidDateTime(end) {
+				return e.BadRequestError("Valid Start and End dates are required", nil)
 			}
 
-			filter := "file_date >= {:start} && file_date <= {:end}"
-			params := map[string]interface{}{ "start": start, "end": end }
-			if targetUser != "" {
-				filter += " && user = {:user}"
-				params["user"] = targetUser
-			}
-
-			records, err := app.FindRecordsByFilter("tasks", filter, "+file_date", 10000, 0, params)
+			records, err := fetchTasksByDateRange(app, start, end, targetUser)
 			if err != nil {
 				return e.InternalServerError("Failed to fetch tasks", err)
 			}
@@ -207,18 +193,11 @@ func main() {
 			end := e.Request.URL.Query().Get("end")
 			targetUser := e.Request.URL.Query().Get("user")
 
-			if start == "" || end == "" {
-				return e.BadRequestError("Start and End dates are required", nil)
+			if start == "" || end == "" || !isValidDateTime(start) || !isValidDateTime(end) {
+				return e.BadRequestError("Valid Start and End dates are required", nil)
 			}
 
-			filter := "file_date >= {:start} && file_date <= {:end}"
-			params := map[string]interface{}{ "start": start, "end": end }
-			if targetUser != "" {
-				filter += " && user = {:user}"
-				params["user"] = targetUser
-			}
-
-			records, err := app.FindRecordsByFilter("tasks", filter, "+file_date", 10000, 0, params)
+			records, err := fetchTasksByDateRange(app, start, end, targetUser)
 			if err != nil {
 				return e.InternalServerError("Failed to fetch tasks", err)
 			}

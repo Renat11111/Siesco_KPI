@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase"
+	"github.com/pocketbase/pocketbase/core"
 )
 
 func isValidYear(year string) bool {
@@ -29,7 +30,23 @@ func isValidDateTime(dt string) bool {
 	if _, err := time.Parse(time.RFC3339, dt); err == nil {
 		return true
 	}
+	// Also try simple date (YYYY-MM-DD) which is often passed as start/end
+	if _, err := time.Parse("2006-01-02", dt); err == nil {
+		return true
+	}
 	return false
+}
+
+func fetchTasksByDateRange(app *pocketbase.PocketBase, start, end, targetUser string) ([]*core.Record, error) {
+	filter := "file_date >= {:start} && file_date <= {:end}"
+	params := map[string]interface{}{"start": start, "end": end}
+
+	if targetUser != "" {
+		filter += " && user = {:user}"
+		params["user"] = targetUser
+	}
+
+	return app.FindRecordsByFilter("tasks", filter, "+file_date", 10000, 0, params)
 }
 
 func streamRanking(app *pocketbase.PocketBase, start, end string, statusMap map[string]string) (interface{}, error) {
