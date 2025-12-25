@@ -15,33 +15,11 @@ import (
 	"github.com/pocketbase/pocketbase/tools/types"
 )
 
-// Структуры конфигурации
-type StatusConfig struct {
-	Title string `json:"title"`
-	Slug  string `json:"slug"`
-	Color string `json:"color"`
-	Type  string `json:"type"` // "final", "in_progress", "return"
-}
-
-// Global map to store status types for helper functions
-var GlobalStatusMap = make(map[string]string)
-
-type TaskFieldConfig struct {
-	Key        string `json:"key"`
-	Title      string `json:"title"`
-	Type       string `json:"type"`
-	Required   bool   `json:"required"`
-	Width      string `json:"width"`
-	Filterable bool   `json:"filterable"` 
-}
-
-type AppConfig struct {
-	Statuses   []StatusConfig    `json:"statuses"`
-	TaskFields []TaskFieldConfig `json:"task_fields"`
-}
-
 func main() {
 	app := pocketbase.New()
+	appContext := &AppContext{
+		StatusMap: make(map[string]string),
+	}
 
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.GET("/hello", func(e *core.RequestEvent) error {
@@ -57,7 +35,7 @@ func main() {
 
 			start := month + "-01 00:00:00"
 			end := month + "-31 23:59:59"
-			response, err := streamRanking(app, start, end)
+			response, err := streamRanking(app, start, end, appContext.StatusMap)
 			if err != nil {
 				return e.InternalServerError("Failed to calculate ranking", err)
 			}
@@ -74,7 +52,7 @@ func main() {
 			start := year + "-01-01 00:00:00"
 			end := year + "-12-31 23:59:59"
 
-			response, err := streamRanking(app, start, end)
+			response, err := streamRanking(app, start, end, appContext.StatusMap)
 			if err != nil {
 				return e.InternalServerError("Failed to calculate yearly stats", err)
 			}
@@ -130,7 +108,7 @@ func main() {
 
 			for tNum, task := range latestTasks {
 				// Check strictly for unfinished statuses
-				if isStatusInProgress(task["status"]) {
+				if isStatusInProgress(task["status"], appContext.StatusMap) {
 					
 					if meta, exists := taskMeta[tNum]; exists {
 						task["source_file_date"] = meta["source_file_date"]
@@ -210,7 +188,7 @@ func main() {
 
 			for _, agg := range taskMap {
 				// Check strictly for COMPLETED statuses
-				if isStatusCompleted(agg.LatestData["status"]) {
+				if isStatusCompleted(agg.LatestData["status"], appContext.StatusMap) {
 					
 					agg.LatestData["time_spent"] = agg.TotalTimeSpent
 					agg.LatestData["source_file_date"] = agg.LatestFileDate
@@ -271,7 +249,7 @@ func main() {
 
 			for tNum, task := range latestTasks {
 				// Check strictly for RETURNED statuses (In Progress Return only)
-				if isStatusInProgressReturn(task["status"]) {
+				if isStatusInProgressReturn(task["status"], appContext.StatusMap) {
 					
 					if meta, exists := taskMeta[tNum]; exists {
 						task["source_file_date"] = meta["source_file_date"]
@@ -411,7 +389,7 @@ func main() {
 			return nil
 		})
 
-		if err := bootstrapCollections(app); err != nil {
+		if err := bootstrapCollections(app, appContext); err != nil {
 			log.Printf("Bootstrap warning: %v", err)
 		}
 
@@ -423,7 +401,7 @@ func main() {
 	}
 }
 
-func bootstrapCollections(app *pocketbase.PocketBase) error {
+func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error {
 	var err error
 	var leaveReqs *core.Collection
 
@@ -581,10 +559,10 @@ func bootstrapCollections(app *pocketbase.PocketBase) error {
 		var appConfig AppConfig
 		json.Unmarshal(bytes, &appConfig)
 
-		// Populate global map with both Slug and Title for flexible lookup
+		// Populate context map with both Slug and Title for flexible lookup
 		for _, s := range appConfig.Statuses {
-			GlobalStatusMap[strings.ToLower(strings.TrimSpace(s.Slug))] = s.Type
-			GlobalStatusMap[strings.ToLower(strings.TrimSpace(s.Title))] = s.Type
+			context.StatusMap[strings.ToLower(strings.TrimSpace(s.Slug))] = s.Type
+			context.StatusMap[strings.ToLower(strings.TrimSpace(s.Title))] = s.Type
 		}
 
 		statusesCollection, err := app.FindCollectionByNameOrId("statuses")
@@ -651,161 +629,4 @@ func bootstrapCollections(app *pocketbase.PocketBase) error {
 	return nil
 }
 
-func streamRanking(app *pocketbase.PocketBase, start, end string) (interface{}, error) {
-	// Raw SQL query to fetch minimal data
-	query := app.DB().NewQuery("SELECT user, data FROM tasks WHERE file_date >= {:start} AND file_date <= {:end} ORDER BY file_date ASC")
-	query.Bind(map[string]interface{}{
-		"start": start,
-		"end":   end,
-	})
-
-	rows, err := query.Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	type UserStats struct {
-		UserId         string
-		TotalHours     float64
-		TaskStatuses   map[string]string
-	}
-	statsMap := make(map[string]*UserStats)
-
-	// Variables for scanning
-	var userId string
-	var dataJson string
-
-	for rows.Next() {
-		if err := rows.Scan(&userId, &dataJson); err != nil {
-			continue
-		}
-		if userId == "" { continue }
-
-		if _, exists := statsMap[userId]; !exists {
-			statsMap[userId] = &UserStats{
-				UserId:       userId,
-				TotalHours:   0,
-				TaskStatuses: make(map[string]string),
-			}
-		}
-		entry := statsMap[userId]
-
-		// Use our helper
-		taskList, err := parseTaskData(dataJson)
-		if err != nil {
-			log.Printf("Error parsing streamed task data for user %s: %v", userId, err)
-			continue
-		}
-
-		for _, t := range taskList {
-			entry.TotalHours += getTimeSpent(t["time_spent"])
-			
-			tNum := fmt.Sprintf("%v", t["task_number"])
-			if tNum != "" {
-				entry.TaskStatuses[tNum] = fmt.Sprintf("%v", t["status"])
-			}
-		}
-	}
-
-	// Fetch users mapping (small data, usually < 100 users)
-	users, _ := app.FindRecordsByFilter("users", "id != ''", "", 1000, 0, nil)
-	userMap := make(map[string]string)
-	emailMap := make(map[string]string)
-	for _, u := range users {
-		userMap[u.Id] = u.GetString("name")
-		emailMap[u.Id] = u.GetString("email")
-	}
-
-	type ResponseItem struct {
-		UserId         string  `json:"user_id"`
-		UserName       string  `json:"user_name"`
-		UserEmail      string  `json:"user_email"`
-		TotalHours     float64 `json:"total_hours"`
-		CompletedTasks int     `json:"completed_tasks"`
-	}
-
-	response := []ResponseItem{}
-
-	for userId, stat := range statsMap {
-		completedCount := 0
-		for _, status := range stat.TaskStatuses {
-			if isStatusCompleted(status) {
-				completedCount++
-			}
-		}
-		name := userMap[userId]
-		if name == "" { name = "Unknown" }
-
-		response = append(response, ResponseItem{
-			UserId:         userId,
-			UserName:       name,
-			UserEmail:      emailMap[userId],
-			TotalHours:     stat.TotalHours,
-			CompletedTasks: completedCount,
-		})
-	}
-	return response, nil
-}
-
-// --- Helpers ---
-
-func parseTaskData(jsonStr string) ([]map[string]interface{}, error) {
-	if jsonStr == "" {
-		return []map[string]interface{}{}, nil
-	}
-	var taskList []map[string]interface{}
-	decoder := json.NewDecoder(strings.NewReader(jsonStr))
-	decoder.UseNumber()
-	if err := decoder.Decode(&taskList); err != nil {
-		return nil, err
-	}
-	return taskList, nil
-}
-
-func getTimeSpent(v interface{}) float64 {
-	if val, ok := v.(json.Number); ok {
-		f, _ := val.Float64()
-		return f
-	}
-	if val, ok := v.(float64); ok {
-		return val
-	}
-	return 0
-}
-
-func normalizeStatus(status interface{}) string {
-	return strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", status)))
-}
-
-func isStatusCompleted(status interface{}) bool {
-	norm := normalizeStatus(status)
-	t, exists := GlobalStatusMap[norm]
-	if !exists {
-		// Fallback for old records or unspecified config
-		return norm == "completed" || norm == "завершена" ||
-			norm == "completed_return" || norm == "завершена (возврат)" ||
-			norm == "completed_appeal" || norm == "завершена (апелляция)"
-	}
-	return t == "final"
-}
-
-func isStatusInProgress(status interface{}) bool {
-	norm := normalizeStatus(status)
-	t, exists := GlobalStatusMap[norm]
-	if !exists {
-		return norm == "in_progress" || norm == "выполняется" ||
-			norm == "in_progress_return" || norm == "выполняется (возврат)"
-	}
-	return t == "in_progress" || t == "return"
-}
-
-func isStatusInProgressReturn(status interface{}) bool {
-	norm := normalizeStatus(status)
-	t, exists := GlobalStatusMap[norm]
-	if !exists {
-		return norm == "in_progress_return" || norm == "выполняется (возврат)"
-	}
-	return t == "return"
-}
 
