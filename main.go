@@ -66,76 +66,7 @@ func main() {
 				return e.InternalServerError("Failed to fetch tasks", err)
 			}
 
-			type UserStats struct {
-				UserId         string
-				TotalHours     float64
-				TaskStatuses   map[string]string
-			}
-
-			statsMap := make(map[string]*UserStats)
-
-			for _, r := range records {
-				userId := r.GetString("user")
-				if userId == "" { continue }
-
-				if _, exists := statsMap[userId]; !exists {
-					statsMap[userId] = &UserStats{
-						UserId:       userId,
-						TotalHours:   0,
-						TaskStatuses: make(map[string]string),
-					}
-				}
-				entry := statsMap[userId]
-
-				taskList, err := parseTaskData(r.GetString("data"))
-				if err == nil {
-					for _, t := range taskList {
-						entry.TotalHours += getTimeSpent(t["time_spent"])
-						
-						tNum := fmt.Sprintf("%v", t["task_number"])
-						if tNum != "" {
-							entry.TaskStatuses[tNum] = fmt.Sprintf("%v", t["status"])
-						}
-					}
-				}
-			}
-
-			users, _ := app.FindRecordsByFilter("users", "id != ''", "", 1000, 0, nil)
-			userMap := make(map[string]string)
-			emailMap := make(map[string]string)
-			for _, u := range users {
-				userMap[u.Id] = u.GetString("name")
-				emailMap[u.Id] = u.GetString("email")
-			}
-
-			type ResponseItem struct {
-				UserId         string  `json:"user_id"`
-				UserName       string  `json:"user_name"`
-				UserEmail      string  `json:"user_email"`
-				TotalHours     float64 `json:"total_hours"`
-				CompletedTasks int     `json:"completed_tasks"`
-			}
-
-			response := []ResponseItem{}
-
-			for userId, stat := range statsMap {
-				completedCount := 0
-				for _, status := range stat.TaskStatuses {
-					if isStatusCompleted(status) {
-						completedCount++
-					}
-				}
-				name := userMap[userId]
-				if name == "" { name = "Unknown" }
-
-				response = append(response, ResponseItem{
-					UserId:         userId,
-					UserName:       name,
-					UserEmail:      emailMap[userId],
-					TotalHours:     stat.TotalHours,
-					CompletedTasks: completedCount,
-				})
-			}
+			response, _ := calculateRankingResponse(app, records)
 			return e.JSON(200, response)
 		})
 
@@ -161,76 +92,7 @@ func main() {
 				return e.InternalServerError("Failed to fetch tasks", err)
 			}
 
-			type UserStats struct {
-				UserId         string
-				TotalHours     float64
-				TaskStatuses   map[string]string
-			}
-
-			statsMap := make(map[string]*UserStats)
-
-			for _, r := range records {
-				userId := r.GetString("user")
-				if userId == "" { continue }
-
-				if _, exists := statsMap[userId]; !exists {
-					statsMap[userId] = &UserStats{
-						UserId:       userId,
-						TotalHours:   0,
-						TaskStatuses: make(map[string]string),
-					}
-				}
-				entry := statsMap[userId]
-
-				taskList, err := parseTaskData(r.GetString("data"))
-				if err == nil {
-					for _, t := range taskList {
-						entry.TotalHours += getTimeSpent(t["time_spent"])
-						
-						tNum := fmt.Sprintf("%v", t["task_number"])
-						if tNum != "" {
-							entry.TaskStatuses[tNum] = fmt.Sprintf("%v", t["status"])
-						}
-					}
-				}
-			}
-
-			users, _ := app.FindRecordsByFilter("users", "id != ''", "", 1000, 0, nil)
-			userMap := make(map[string]string)
-			emailMap := make(map[string]string)
-			for _, u := range users {
-				userMap[u.Id] = u.GetString("name")
-				emailMap[u.Id] = u.GetString("email")
-			}
-
-			type ResponseItem struct {
-				UserId         string  `json:"user_id"`
-				UserName       string  `json:"user_name"`
-				UserEmail      string  `json:"user_email"`
-				TotalHours     float64 `json:"total_hours"`
-				CompletedTasks int     `json:"completed_tasks"`
-			}
-
-			response := []ResponseItem{}
-
-			for userId, stat := range statsMap {
-				completedCount := 0
-				for _, status := range stat.TaskStatuses {
-					if isStatusCompleted(status) {
-						completedCount++
-					}
-				}
-				name := userMap[userId]
-				if name == "" { name = "Unknown" }
-
-				response = append(response, ResponseItem{
-					UserId:         userId,
-					UserName:       name,
-					UserEmail:      emailMap[userId],
-					TotalHours:     stat.TotalHours,
-					CompletedTasks: completedCount,
-				})
-			}
+			response, _ := calculateRankingResponse(app, records)
 			return e.JSON(200, response)
 		})
 
@@ -840,4 +702,78 @@ func isStatusInProgress(status interface{}) bool {
 func isStatusInProgressReturn(status interface{}) bool {
 	norm := normalizeStatus(status)
 	return norm == "in_progress_return" || norm == "выполняется (возврат)"
+}
+
+func calculateRankingResponse(app *pocketbase.PocketBase, records []*core.Record) (interface{}, error) {
+	type UserStats struct {
+		UserId         string
+		TotalHours     float64
+		TaskStatuses   map[string]string
+	}
+
+	statsMap := make(map[string]*UserStats)
+
+	for _, r := range records {
+		userId := r.GetString("user")
+		if userId == "" { continue }
+
+		if _, exists := statsMap[userId]; !exists {
+			statsMap[userId] = &UserStats{
+				UserId:       userId,
+				TotalHours:   0,
+				TaskStatuses: make(map[string]string),
+			}
+		}
+		entry := statsMap[userId]
+
+		taskList, err := parseTaskData(r.GetString("data"))
+		if err == nil {
+			for _, t := range taskList {
+				entry.TotalHours += getTimeSpent(t["time_spent"])
+				
+				tNum := fmt.Sprintf("%v", t["task_number"])
+				if tNum != "" {
+					entry.TaskStatuses[tNum] = fmt.Sprintf("%v", t["status"])
+				}
+			}
+		}
+	}
+
+	users, _ := app.FindRecordsByFilter("users", "id != ''", "", 1000, 0, nil)
+	userMap := make(map[string]string)
+	emailMap := make(map[string]string)
+	for _, u := range users {
+		userMap[u.Id] = u.GetString("name")
+		emailMap[u.Id] = u.GetString("email")
+	}
+
+	type ResponseItem struct {
+		UserId         string  `json:"user_id"`
+		UserName       string  `json:"user_name"`
+		UserEmail      string  `json:"user_email"`
+		TotalHours     float64 `json:"total_hours"`
+		CompletedTasks int     `json:"completed_tasks"`
+	}
+
+	response := []ResponseItem{}
+
+	for userId, stat := range statsMap {
+		completedCount := 0
+		for _, status := range stat.TaskStatuses {
+			if isStatusCompleted(status) {
+				completedCount++
+			}
+		}
+		name := userMap[userId]
+		if name == "" { name = "Unknown" }
+
+		response = append(response, ResponseItem{
+			UserId:         userId,
+			UserName:       name,
+			UserEmail:      emailMap[userId],
+			TotalHours:     stat.TotalHours,
+			CompletedTasks: completedCount,
+		})
+	}
+	return response, nil
 }
