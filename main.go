@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/mail"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/pocketbase/pocketbase"
@@ -70,7 +71,10 @@ func main() {
 				return e.BadRequestError("Valid Start and End dates are required", nil)
 			}
 
-			records, err := fetchTasksByDateRange(app, start, end, targetUser)
+			limit, _ := strconv.Atoi(e.Request.URL.Query().Get("limit"))
+			offset, _ := strconv.Atoi(e.Request.URL.Query().Get("offset"))
+
+			records, err := fetchTasksByDateRange(app, start, end, targetUser, limit, offset)
 			if err != nil {
 				return e.InternalServerError("Failed to fetch tasks", err)
 			}
@@ -79,7 +83,7 @@ func main() {
 			taskMeta := make(map[string]map[string]string) 
 
 			for _, r := range records {
-				taskList, err := parseTaskData(r.GetString("data"))
+				taskList, err := parseTaskData(r.GetString(FieldData))
 				if err != nil { continue }
 
 				fileDate := r.GetString("file_date")
@@ -124,7 +128,10 @@ func main() {
 				return e.BadRequestError("Valid Start and End dates are required", nil)
 			}
 
-			records, err := fetchTasksByDateRange(app, start, end, targetUser)
+			limit, _ := strconv.Atoi(e.Request.URL.Query().Get("limit"))
+			offset, _ := strconv.Atoi(e.Request.URL.Query().Get("offset"))
+
+			records, err := fetchTasksByDateRange(app, start, end, targetUser, limit, offset)
 			if err != nil {
 				return e.InternalServerError("Failed to fetch tasks", err)
 			}
@@ -139,7 +146,7 @@ func main() {
 			taskMap := make(map[string]*AggregatedTask)
 
 			for _, r := range records {
-				taskList, err := parseTaskData(r.GetString("data"))
+				taskList, err := parseTaskData(r.GetString(FieldData))
 				if err != nil { continue }
 
 				fileDate := r.GetString("file_date")
@@ -197,7 +204,10 @@ func main() {
 				return e.BadRequestError("Valid Start and End dates are required", nil)
 			}
 
-			records, err := fetchTasksByDateRange(app, start, end, targetUser)
+			limit, _ := strconv.Atoi(e.Request.URL.Query().Get("limit"))
+			offset, _ := strconv.Atoi(e.Request.URL.Query().Get("offset"))
+
+			records, err := fetchTasksByDateRange(app, start, end, targetUser, limit, offset)
 			if err != nil {
 				return e.InternalServerError("Failed to fetch tasks", err)
 			}
@@ -206,7 +216,7 @@ func main() {
 			taskMeta := make(map[string]map[string]string) 
 
 			for _, r := range records {
-				taskList, err := parseTaskData(r.GetString("data"))
+				taskList, err := parseTaskData(r.GetString(FieldData))
 				if err != nil { continue }
 
 				fileDate := r.GetString("file_date")
@@ -270,12 +280,12 @@ func main() {
 				return e.BadRequestError("record_id and task_number are required", nil)
 			}
 
-			record, err := app.FindRecordById("tasks", data.RecordId)
+			record, err := app.FindRecordById(CollectionTasks, data.RecordId)
 			if err != nil {
 				return e.NotFoundError("Record not found", err)
 			}
 
-			taskList, err := parseTaskData(record.GetString("data"))
+			taskList, err := parseTaskData(record.GetString(FieldData))
 			if err != nil {
 				return e.InternalServerError("Failed to parse task data", err)
 			}
@@ -320,7 +330,7 @@ func main() {
 				if err != nil {
 					return e.InternalServerError("Failed to serialize updated data", err)
 				}
-				record.Set("data", string(newJsonBytes))
+				record.Set(FieldData, string(newJsonBytes))
 				if err := app.Save(record); err != nil {
 					return e.InternalServerError("Failed to save record", err)
 				}
@@ -369,7 +379,7 @@ func main() {
 		})
 
 		if err := bootstrapCollections(app, appContext); err != nil {
-			log.Printf("Bootstrap warning: %v", err)
+			log.Fatalf("CRITICAL: Bootstrap failed: %v", err)
 		}
 
 		return e.Next()
@@ -384,29 +394,34 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 	var err error
 	var leaveReqs *core.Collection
 
+	log.Println("Initializing collections...")
+
 	// --- 1. Модификация коллекции Users ---
 	users, err := app.FindCollectionByNameOrId("users")
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to find users collection: %w", err)
 	}
 
 	targetRule := "@request.auth.id != ''"
 	if users.ListRule == nil || *users.ListRule != targetRule {
+		log.Println("Updating Users collection API rules...")
 		users.ListRule = types.Pointer(targetRule)
 		users.ViewRule = types.Pointer(targetRule)
 		if err := app.Save(users); err != nil {
-			return err
+			return fmt.Errorf("failed to update users rules: %w", err)
 		}
 	}
 
 	if users.Fields.GetByName("superadmin") == nil {
+		log.Println("Adding 'superadmin' field to users...")
 		users.Fields.Add(&core.BoolField{ Name: "superadmin" })
-		if err := app.Save(users); err != nil { return err }
+		if err := app.Save(users); err != nil { return fmt.Errorf("failed to add superadmin field: %w", err) }
 	}
 
 	if users.Fields.GetByName("is_coordinator") == nil {
+		log.Println("Adding 'is_coordinator' field to users...")
 		users.Fields.Add(&core.BoolField{ Name: "is_coordinator" })
-		if err := app.Save(users); err != nil { return err }
+		if err := app.Save(users); err != nil { return fmt.Errorf("failed to add coordinator field: %w", err) }
 	}
 
 	// --- 1.1 Create/Update 'leave_requests' collection ---
@@ -414,7 +429,7 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 	if err != nil {
 		log.Println("Creating 'leave_requests' collection...")
 		leaveReqs = core.NewBaseCollection("leave_requests")
-		if err := app.Save(leaveReqs); err != nil { return err }
+		if err := app.Save(leaveReqs); err != nil { return fmt.Errorf("failed to create leave_requests: %w", err) }
 	}
 	if leaveReqs.Fields.GetByName("user") == nil { leaveReqs.Fields.Add(&core.RelationField{Name: "user", CollectionId: users.Id, MaxSelect: 1, Required: true}) }
 	if leaveReqs.Fields.GetByName("start_date") == nil { leaveReqs.Fields.Add(&core.DateField{Name: "start_date", Required: true}) }
@@ -430,13 +445,14 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 	leaveReqs.CreateRule = types.Pointer("@request.auth.id != ''")
 	leaveReqs.UpdateRule = types.Pointer("@request.auth.superadmin = true || @request.auth.is_coordinator = true")
 	leaveReqs.DeleteRule = types.Pointer("@request.auth.superadmin = true || @request.auth.is_coordinator = true")
-	if err := app.Save(leaveReqs); err != nil { log.Printf("Failed to save leave_requests: %v", err) }
+	if err := app.Save(leaveReqs); err != nil { return fmt.Errorf("failed to save leave_requests: %w", err) }
 
 	// --- 2. Создание/Обновление коллекции Tasks ---
-	tasksCollection, err := app.FindCollectionByNameOrId("tasks")
+	log.Println("Checking Tasks collection...")
+	tasksCollection, err := app.FindCollectionByNameOrId(CollectionTasks)
 	if err != nil {
 		log.Println("Creating 'tasks' collection...")
-		tasksCollection = core.NewBaseCollection("tasks")
+		tasksCollection = core.NewBaseCollection(CollectionTasks)
 		
 		tasksCollection.ListRule = types.Pointer("@request.auth.id != ''")
 		tasksCollection.ViewRule = types.Pointer("@request.auth.id != '' && @request.auth.id = user")
@@ -461,7 +477,7 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 		})
 
 		tasksCollection.Fields.Add(&core.JSONField{
-			Name:     "data",
+			Name:     FieldData,
 			Required: false,
 			MaxSize:  2000000,
 		})
@@ -500,12 +516,16 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 	for _, idx := range idxList {
 		exists := false
 		for _, existing := range tasksCollection.Indexes { if strings.Contains(existing, idx.Name) { exists = true; break } }
-		if !exists { tasksCollection.AddIndex(idx.Name, idx.Unique, idx.Columns, "") }
+		if !exists { 
+			log.Printf("Adding index %s to Tasks...", idx.Name)
+			tasksCollection.AddIndex(idx.Name, idx.Unique, idx.Columns, "") 
+		}
 	}
 
-	if err := app.Save(tasksCollection); err != nil { return err }
+	if err := app.Save(tasksCollection); err != nil { return fmt.Errorf("failed to save tasks collection: %w", err) }
 
 	// --- 2.1 Создание коллекции 'deletion_logs' ---
+	log.Println("Checking Log collections...")
 	deletionLogs, err := app.FindCollectionByNameOrId("deletion_logs")
 	if err != nil {
 		deletionLogs = core.NewBaseCollection("deletion_logs")
@@ -515,7 +535,7 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 		deletionLogs.Fields.Add(&core.RelationField{ Name: "deleted_by", CollectionId: users.Id, MaxSelect: 1 })
 		deletionLogs.Fields.Add(&core.FileField{ Name: "excel_file", MaxSelect: 1, MimeTypes: []string{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/vnd.ms-excel"}})
 		deletionLogs.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
-		if err := app.Save(deletionLogs); err != nil { return err }
+		if err := app.Save(deletionLogs); err != nil { return fmt.Errorf("failed to create deletion_logs: %w", err) }
 	}
 
 	// --- 2.2 Создание коллекции 'upload_logs' ---
@@ -527,70 +547,80 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 		uploadLogs.Fields.Add(&core.RelationField{Name: "uploaded_by", CollectionId: users.Id, MaxSelect: 1})
 		uploadLogs.Fields.Add(&core.RelationField{Name: "target_user", CollectionId: users.Id, MaxSelect: 1})
 		uploadLogs.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
-		if err := app.Save(uploadLogs); err != nil { return err }
+		if err := app.Save(uploadLogs); err != nil { return fmt.Errorf("failed to create upload_logs: %w", err) }
 	}
 
 	// --- 3. Чтение config.json ---
+	log.Println("Syncing config.json...")
 	configFile, err := os.Open("config.json")
-	if err == nil {
-		defer configFile.Close()
-		bytes, _ := io.ReadAll(configFile)
-		var appConfig AppConfig
-		json.Unmarshal(bytes, &appConfig)
+	if err != nil {
+		log.Fatalf("CRITICAL: config.json not found or could not be opened: %v", err)
+	}
+	defer configFile.Close()
 
-		// Populate context map with both Slug and Title for flexible lookup
+	bytes, err := io.ReadAll(configFile)
+	if err != nil {
+		log.Fatalf("CRITICAL: Failed to read config.json: %v", err)
+	}
+
+	var appConfig AppConfig
+	if err := json.Unmarshal(bytes, &appConfig); err != nil {
+		log.Fatalf("CRITICAL: Failed to parse config.json: %v", err)
+	}
+
+	// Populate context map with both Slug and Title for flexible lookup
+	for _, s := range appConfig.Statuses {
+		context.StatusMap[strings.ToLower(strings.TrimSpace(s.Slug))] = s.Type
+		context.StatusMap[strings.ToLower(strings.TrimSpace(s.Title))] = s.Type
+	}
+
+	statusesCollection, err := app.FindCollectionByNameOrId("statuses")
+	if err != nil {
+		statusesCollection = core.NewBaseCollection("statuses")
+		statusesCollection.ListRule = types.Pointer("@request.auth.id != ''")
+		statusesCollection.Fields.Add(&core.TextField{Name: "title", Required: true})
+		statusesCollection.Fields.Add(&core.TextField{Name: "slug", Required: true})
+		statusesCollection.Fields.Add(&core.SelectField{Name: "color", Required: true, MaxSelect: 1, Values: []string{"slate", "gray", "zinc", "neutral", "stone", "red", "orange", "amber", "yellow", "lime", "green", "emerald", "teal", "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink", "rose", "success", "warning", "danger", "info", "primary", "secondary"}})
+		statusesCollection.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
+		
+		if err := app.Save(statusesCollection); err != nil {
+			return fmt.Errorf("failed to create statuses: %w", err)
+		}
+
+		// Populate initial statuses
 		for _, s := range appConfig.Statuses {
-			context.StatusMap[strings.ToLower(strings.TrimSpace(s.Slug))] = s.Type
-			context.StatusMap[strings.ToLower(strings.TrimSpace(s.Title))] = s.Type
+			record := core.NewRecord(statusesCollection)
+			record.Set("title", s.Title); record.Set("slug", s.Slug); record.Set("color", s.Color)
+			app.Save(record)
+		}
+	}
+
+	fieldsCollection, err := app.FindCollectionByNameOrId("task_fields")
+	if err != nil {
+		fieldsCollection = core.NewBaseCollection("task_fields")
+		fieldsCollection.ListRule = types.Pointer("@request.auth.id != ''")
+		fieldsCollection.Fields.Add(&core.TextField{Name: "key", Required: true})
+		fieldsCollection.Fields.Add(&core.TextField{Name: "title", Required: true})
+		fieldsCollection.Fields.Add(&core.TextField{Name: "type", Required: true})
+		fieldsCollection.Fields.Add(&core.TextField{Name: "width"})
+		fieldsCollection.Fields.Add(&core.BoolField{Name: "required"})
+		fieldsCollection.Fields.Add(&core.BoolField{Name: "filterable"})
+		fieldsCollection.Fields.Add(&core.NumberField{Name: "order"})
+		
+		if err := app.Save(fieldsCollection); err != nil {
+			return fmt.Errorf("failed to create task_fields: %w", err)
 		}
 
-		statusesCollection, err := app.FindCollectionByNameOrId("statuses")
-		if err != nil {
-			statusesCollection = core.NewBaseCollection("statuses")
-			statusesCollection.ListRule = types.Pointer("@request.auth.id != ''")
-			statusesCollection.Fields.Add(&core.TextField{Name: "title", Required: true})
-			statusesCollection.Fields.Add(&core.TextField{Name: "slug", Required: true})
-			statusesCollection.Fields.Add(&core.SelectField{Name: "color", Required: true, MaxSelect: 1, Values: []string{"slate", "gray", "zinc", "neutral", "stone", "red", "orange", "amber", "yellow", "lime", "green", "emerald", "teal", "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink", "rose", "success", "warning", "danger", "info", "primary", "secondary"}})
-			statusesCollection.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
-			
-			if err := app.Save(statusesCollection); err != nil {
-				return err
-			}
-
-			// Populate initial statuses
-			for _, s := range appConfig.Statuses {
-				record := core.NewRecord(statusesCollection)
-				record.Set("title", s.Title); record.Set("slug", s.Slug); record.Set("color", s.Color)
-				app.Save(record)
-			}
-		}
-
-		fieldsCollection, err := app.FindCollectionByNameOrId("task_fields")
-		if err != nil {
-			fieldsCollection = core.NewBaseCollection("task_fields")
-			fieldsCollection.ListRule = types.Pointer("@request.auth.id != ''")
-			fieldsCollection.Fields.Add(&core.TextField{Name: "key", Required: true})
-			fieldsCollection.Fields.Add(&core.TextField{Name: "title", Required: true})
-			fieldsCollection.Fields.Add(&core.TextField{Name: "type", Required: true})
-			fieldsCollection.Fields.Add(&core.TextField{Name: "width"})
-			fieldsCollection.Fields.Add(&core.BoolField{Name: "required"})
-			fieldsCollection.Fields.Add(&core.BoolField{Name: "filterable"})
-			fieldsCollection.Fields.Add(&core.NumberField{Name: "order"})
-			
-			if err := app.Save(fieldsCollection); err != nil {
-				return err
-			}
-
-			// Populate initial task_fields
-			for i, f := range appConfig.TaskFields {
-				record := core.NewRecord(fieldsCollection)
-				record.Set("key", f.Key); record.Set("title", f.Title); record.Set("type", f.Type); record.Set("required", f.Required); record.Set("width", f.Width); record.Set("filterable", f.Filterable); record.Set("order", i)
-				app.Save(record)
-			}
+		// Populate initial task_fields
+		for i, f := range appConfig.TaskFields {
+			record := core.NewRecord(fieldsCollection)
+			record.Set("key", f.Key); record.Set("title", f.Title); record.Set("type", f.Type); record.Set("required", f.Required); record.Set("width", f.Width); record.Set("filterable", f.Filterable); record.Set("order", i)
+			app.Save(record)
 		}
 	}
 
 	// --- 6. View Collection 'monthly_user_stats' ---
+	log.Println("Checking View collections...")
 	monthlyStats, err := app.FindCollectionByNameOrId("monthly_user_stats")
 	if err != nil {
 		monthlyStats = core.NewBaseCollection("monthly_user_stats")
@@ -602,10 +632,10 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 		monthlyStats.Fields.Add(&core.TextField{Name: "user_email"})
 		monthlyStats.Fields.Add(&core.TextField{Name: "month"})
 		monthlyStats.Fields.Add(&core.RelationField{Name: "user", CollectionId: users.Id, MaxSelect: 1})
-		app.Save(monthlyStats)
+		if err := app.Save(monthlyStats); err != nil {
+			return fmt.Errorf("failed to create monthly view: %w", err)
+		}
 	}
 
 	return nil
 }
-
-

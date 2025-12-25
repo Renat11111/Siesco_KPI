@@ -37,7 +37,7 @@ func isValidDateTime(dt string) bool {
 	return false
 }
 
-func fetchTasksByDateRange(app *pocketbase.PocketBase, start, end, targetUser string) ([]*core.Record, error) {
+func fetchTasksByDateRange(app *pocketbase.PocketBase, start, end, targetUser string, limit, offset int) ([]*core.Record, error) {
 	filter := "file_date >= {:start} && file_date <= {:end}"
 	params := map[string]interface{}{"start": start, "end": end}
 
@@ -46,7 +46,11 @@ func fetchTasksByDateRange(app *pocketbase.PocketBase, start, end, targetUser st
 		params["user"] = targetUser
 	}
 
-	return app.FindRecordsByFilter("tasks", filter, "+file_date", 10000, 0, params)
+	if limit <= 0 {
+		limit = 10000 // Default high limit for backward compatibility
+	}
+
+	return app.FindRecordsByFilter("tasks", filter, "+file_date", limit, offset, params)
 }
 
 func streamRanking(app *pocketbase.PocketBase, start, end string, statusMap map[string]string) (interface{}, error) {
