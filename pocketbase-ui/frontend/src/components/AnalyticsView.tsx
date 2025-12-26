@@ -17,7 +17,7 @@ function ReturnedTasksCard({ lang }: { lang: Language }) {
     useEffect(() => {
         const fetchTasks = async () => {
             const user = pb.authStore.record;
-            if (!user) return;
+            if (!user?.id) return;
             
             const now = new Date();
             const start = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -38,7 +38,20 @@ function ReturnedTasksCard({ lang }: { lang: Language }) {
                 setLoading(false);
             }
         };
+
         fetchTasks();
+
+        // Realtime subscription
+        pb.collection('tasks').subscribe('*', (e) => {
+            const user = pb.authStore.record;
+            if (user && e.record && e.record.user === user.id) {
+                fetchTasks();
+            }
+        });
+
+        return () => {
+            pb.collection('tasks').unsubscribe('*');
+        };
     }, []);
 
     // Helper for date formatting

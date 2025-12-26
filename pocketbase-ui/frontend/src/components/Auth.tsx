@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import pb from '../lib/pocketbase';
 import { ClientResponseError } from 'pocketbase';
 import TaskUpload from './TaskUpload';
 import TaskList from './TaskList';
 import AnalyticsView from './AnalyticsView';
 import LeaveRequests from './LeaveRequests';
+import ChangePasswordModal from './ChangePasswordModal';
 import { translations, Language } from '../lib/translations';
-import { IconUpload, IconList, IconLogout, IconUser, IconChart, IconCalendar } from './Icons';
+import { IconUpload, IconList, IconLogout, IconUser, IconChart, IconCalendar, IconLock } from './Icons';
 import logo from '../assets/images/logo.jpg';
 
 type ViewMode = 'upload' | 'list' | 'analytics' | 'timeoff';
@@ -31,15 +32,7 @@ export default function Auth({ lang, setLang }: AuthProps) {
     
     const [user, setUser] = useState(pb.authStore.record);
     const [viewMode, setViewMode] = useState<ViewMode>('upload');
-
-    // Глобальное отслеживание авторизации
-    useEffect(() => {
-        const unsubscribe = pb.authStore.onChange((_token, record) => {
-            console.log("[Auth] Auth store changed, updating user state");
-            setUser(record);
-        });
-        return () => unsubscribe();
-    }, []);
+    const [showPasswordModal, setShowPasswordModal] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -92,212 +85,85 @@ export default function Auth({ lang, setLang }: AuthProps) {
     if (user) {
         return (
             <div className="app-layout animate-fade-in">
-                {/* Sidebar */}
                 <aside className="sidebar">
                     <div className="sidebar-logo">
                         <img src={logo} alt="Siesco KPI" className="sidebar-brand-img" />
                     </div>
                     
                     <nav className="nav-menu">
-                        <button 
-                            className={`nav-item ${viewMode === 'upload' ? 'active' : ''}`}
-                            onClick={() => setViewMode('upload')}
-                        >
-                            <IconUpload />
-                            {t.tabUpload}
-                        </button>
-                        <button 
-                            className={`nav-item ${viewMode === 'analytics' ? 'active' : ''}`}
-                            onClick={() => setViewMode('analytics')}
-                        >
-                            <IconChart />
-                            {t.tabAnalytics}
-                        </button>
-                        <button 
-                            className={`nav-item ${viewMode === 'list' ? 'active' : ''}`}
-                            onClick={() => setViewMode('list')}
-                        >
-                            <IconList />
-                            {t.tabView}
-                        </button>
-                        <button 
-                            className={`nav-item ${viewMode === 'timeoff' ? 'active' : ''}`}
-                            onClick={() => setViewMode('timeoff')}
-                        >
-                            <IconCalendar />
-                            {t.tabTimeOff}
-                        </button>
+                        <button className={`nav-item ${viewMode === 'upload' ? 'active' : ''}`} onClick={() => setViewMode('upload')}><IconUpload />{t.tabUpload}</button>
+                        <button className={`nav-item ${viewMode === 'analytics' ? 'active' : ''}`} onClick={() => setViewMode('analytics')}><IconChart />{t.tabAnalytics}</button>
+                        <button className={`nav-item ${viewMode === 'list' ? 'active' : ''}`} onClick={() => setViewMode('list')}><IconList />{t.tabView}</button>
+                        <button className={`nav-item ${viewMode === 'timeoff' ? 'active' : ''}`} onClick={() => setViewMode('timeoff')}><IconCalendar />{t.tabTimeOff}</button>
                     </nav>
 
                     <div className="sidebar-footer">
-                        <button className="nav-item" onClick={logout}>
-                            <IconLogout />
-                            {t.logout}
-                        </button>
+                        <button className="nav-item" onClick={() => setShowPasswordModal(true)}><IconLock />{t.changePassword}</button>
+                        <button className="nav-item" onClick={logout}><IconLogout />{t.logout}</button>
                     </div>
                 </aside>
 
-                {/* Main Content */}
                 <main className="main-content">
-                    {/* Header */}
                     <header className="top-header">
                         <div className="header-title">
-                            {/* Dynamic Title based on view */}
-                            {viewMode === 'upload' ? t.uploadTitle : 
-                             viewMode === 'analytics' ? t.tabAnalytics : 
-                             viewMode === 'list' ? t.myTasks : 
-                             t.tabTimeOff}
+                            {viewMode === 'upload' ? t.uploadTitle : viewMode === 'analytics' ? t.tabAnalytics : viewMode === 'list' ? t.myTasks : t.tabTimeOff}
                         </div>
                         <div className="header-actions">
-                            <div className="user-profile">
-                                <IconUser />
-                                {user.email || user.name || "User"}
-                            </div>
-                            <select 
-                                className="lang-select" 
-                                value={lang} 
-                                onChange={(e) => setLang(e.target.value as Language)}
-                            >
-                                <option value="ru">RU</option>
-                                <option value="az">AZ</option>
-                                <option value="en">EN</option>
+                            <div className="user-profile"><IconUser />{user.email || user.name || "User"}</div>
+                            <select className="lang-select" value={lang} onChange={(e) => setLang(e.target.value as Language)}>
+                                <option value="ru">RU</option><option value="az">AZ</option><option value="en">EN</option>
                             </select>
                         </div>
                     </header>
 
-                    {/* Scrollable Page Content */}
                     <div className="page-content">
                         <div className={`container-wrapper ${viewMode === 'upload' ? 'container-upload' : 'container-wide'} `}>
-                            {viewMode === 'upload' ? (
-                                <TaskUpload lang={lang} user={user} />
-                            ) : viewMode === 'analytics' ? (
-                                <AnalyticsView lang={lang} />
-                            ) : viewMode === 'list' ? (
-                                <TaskList lang={lang} user={user} />
-                            ) : (
-                                <LeaveRequests lang={lang} user={user} />
-                            )}
+                            {viewMode === 'upload' ? <TaskUpload lang={lang} /> : viewMode === 'analytics' ? <AnalyticsView lang={lang} /> : viewMode === 'list' ? <TaskList lang={lang} /> : <LeaveRequests lang={lang} />}
                         </div>
                     </div>
+                    {showPasswordModal && <ChangePasswordModal lang={lang} onClose={() => setShowPasswordModal(false)} />}
                 </main>
             </div>
         );
     }
 
-    // --- Render: Login Page (Logged Out) ---
     return (
         <div className="auth-layout animate-fade-in">
-            <div className="auth-card" style={{
-                padding: '2.5rem',
-                gap: '1.5rem',
-                borderTop: '4px solid #ef4444', // Red line fix
-                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.15)', // Original shadow
-            }}>
-                {/* Logo Section */}
-                <img src={logo} alt="SESCO" className="auth-logo" style={{
-                    maxWidth: '160px', // Original size
-                    margin: '0 auto 1rem auto', // Original margin
-                }} />
+            <div className="auth-card" style={{ padding: '2.5rem', gap: '1.5rem', borderTop: '4px solid #ef4444', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.15)' }}>
+                <img src={logo} alt="SESCO" className="auth-logo" style={{ maxWidth: '160px', margin: '0 auto 1rem auto' }} />
                 <div className="auth-welcome">{t.welcomeMessage}</div>
-
                 <h2 style={{textAlign: 'center', marginBottom: '1rem', fontSize: '1.5rem', fontWeight: 700}}>{isLogin ? t.login : t.createAccount}</h2>
-                
-                {error && (
-                    <div className="status-card error">
-                        <strong>Error:</strong> {error}
-                    </div>
-                )}
-
+                {error && <div className="status-card error"><strong>Error:</strong> {error}</div>}
                 <form onSubmit={handleSubmit}>
                     {!isLogin && (
                         <div className="form-group" style={{marginBottom: '1.5rem'}}>
                             <label className="form-label">{t.name}</label>
-                            <input
-                                className="input"
-                                type="text"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                required
-                                placeholder={t.name}
-                                style={{padding: '0.75rem 1rem', fontSize: '1rem', height: 'auto'}}
-                            />
-                            {fieldErrors?.name && <small className="form-error-message">{fieldErrors.name.message}</small>}
+                            <input className="input" type="text" value={name} onChange={(e) => setName(e.target.value)} required style={{padding: '0.75rem 1rem', fontSize: '1rem', height: 'auto'}} />
                         </div>
                     )}
-
                     <div className="form-group" style={{marginBottom: '1.5rem'}}>
                         <label className="form-label">{t.email}</label>
-                        <input
-                            className="input"
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            required
-                            placeholder="name@example.com"
-                            style={{padding: '0.75rem 1rem', fontSize: '1rem', height: 'auto'}}
-                        />
-                        {fieldErrors?.email && <small className="form-error-message">{fieldErrors.email.message}</small>}
+                        <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={{padding: '0.75rem 1rem', fontSize: '1rem', height: 'auto'}} />
                     </div>
-                    
                     <div className="form-group" style={{marginBottom: '1.5rem'}}>
                         <label className="form-label">{t.password}</label>
-                        <input
-                            className="input"
-                            type="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            required
-                            minLength={8} 
-                            placeholder="••••••••"
-                            style={{padding: '0.75rem 1rem', fontSize: '1rem', height: 'auto'}}
-                        />
-                         {fieldErrors?.password && <small className="form-error-message">{fieldErrors.password.message}</small>}
+                        <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required style={{padding: '0.75rem 1rem', fontSize: '1rem', height: 'auto'}} />
                     </div>
-
                     {!isLogin && (
                         <div className="form-group" style={{marginBottom: '1.5rem'}}>
                             <label className="form-label">{t.confirmPassword}</label>
-                            <input
-                                className="input"
-                                type="password"
-                                value={passwordConfirm}
-                                onChange={(e) => setPasswordConfirm(e.target.value)}
-                                required
-                                minLength={8}
-                                placeholder="••••••••"
-                                style={{padding: '0.75rem 1rem', fontSize: '1rem', height: 'auto'}}
-                            />
-                            {fieldErrors?.passwordConfirm && <small className="form-error-message">{fieldErrors.passwordConfirm.message}</small>}
+                            <input className="input" type="password" value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} required style={{padding: '0.75rem 1rem', fontSize: '1rem', height: 'auto'}} />
                         </div>
                     )}
-
                     <button className="btn mt-4" type="submit" disabled={loading} style={{padding: '0.75rem', fontSize: '1rem', height: 'auto', marginTop: '1rem'}}>
                         {loading ? t.processing : (isLogin ? t.login : t.register)}
                     </button>
                 </form>
-
                 <div style={{textAlign: 'center', marginTop: '0.5rem'}}>
-                    <button 
-                        className="btn-secondary"
-                        onClick={() => {
-                            setIsLogin(!isLogin);
-                            setError('');
-                            setFieldErrors({});
-                        }}
-                    >
-                        {isLogin ? t.dontHaveAccount : t.alreadyHaveAccount}
-                    </button>
+                    <button className="btn-secondary" onClick={() => { setIsLogin(!isLogin); setError(''); setFieldErrors({}); }}>{isLogin ? t.dontHaveAccount : t.alreadyHaveAccount}</button>
                 </div>
-
-                {/* Minimal Lang Select at Bottom */}
-                <select 
-                    className="lang-select-minimal" 
-                    value={lang} 
-                    onChange={(e) => setLang(e.target.value as Language)}
-                >
-                    <option value="ru">Русский</option>
-                    <option value="az">Azərbaycan</option>
-                    <option value="en">English</option>
+                <select className="lang-select-minimal" value={lang} onChange={(e) => setLang(e.target.value as Language)}>
+                    <option value="ru">Русский</option><option value="az">Azərbaycan</option><option value="en">English</option>
                 </select>
             </div>
         </div>

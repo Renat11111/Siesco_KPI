@@ -24,6 +24,16 @@ export default function ColleagueRankingChart({ lang }: ColleagueRankingChartPro
 
     useEffect(() => {
         fetchRanking();
+
+        // Subscribe to signaling collection to update ranking for ALL users simultaneously
+        pb.collection('ranking_updates').subscribe('*', (e) => {
+            // console.log("Global ranking update signal received");
+            fetchRanking();
+        });
+
+        return () => {
+            pb.collection('ranking_updates').unsubscribe('*');
+        };
     }, []);
 
     const fetchRanking = async () => {

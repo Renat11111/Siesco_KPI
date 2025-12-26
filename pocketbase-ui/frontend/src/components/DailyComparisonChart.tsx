@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import pb from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
-import { getColor } from '../lib/colors'; // Импортируем getColor
+import { getColor } from '../lib/colors';
 
 interface DailyComparisonChartProps {
     lang: Language;
@@ -14,12 +14,23 @@ export default function DailyComparisonChart({ lang, refreshTrigger }: DailyComp
     const [loading, setLoading] = useState(false);
     const [maxValue, setMaxValue] = useState(10);
     
-    // Interaction State
     const [hoveredDay, setHoveredDay] = useState<number | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         fetchData();
+
+        // Realtime subscription
+        pb.collection('tasks').subscribe('*', (e) => {
+            const user = pb.authStore.record;
+            if (user && e.record && e.record.user === user.id) {
+                fetchData();
+            }
+        });
+
+        return () => {
+            pb.collection('tasks').unsubscribe('*');
+        };
     }, [refreshTrigger]);
 
     const fetchData = async () => {
@@ -29,20 +40,26 @@ export default function DailyComparisonChart({ lang, refreshTrigger }: DailyComp
         setLoading(true);
         try {
             const now = new Date();
-            const startCur = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-            const endCur = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+            const y = now.getFullYear();
+            const m = now.getMonth();
+            
+            // Текущий месяц
+            const startCur = `${y}-${String(m + 1).padStart(2, '0')}-01 00:00:00`;
+            const endCur = `${y}-${String(m + 1).padStart(2, '0')}-${new Date(y, m + 1, 0).getDate()} 23:59:59`;
 
-            const startPrev = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
-            const endPrev = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+            // Прошлый месяц
+            const prevM = new Date(y, m - 1, 1);
+            const startPrev = `${prevM.getFullYear()}-${String(prevM.getMonth() + 1).padStart(2, '0')}-01 00:00:00`;
+            const endPrev = `${prevM.getFullYear()}-${String(prevM.getMonth() + 1).padStart(2, '0')}-${new Date(prevM.getFullYear(), prevM.getMonth() + 1, 0).getDate()} 23:59:59`;
 
             const recordsCur = await pb.collection('tasks').getFullList({
-                filter: `user = "${user.id}" && file_date >= "${startCur.toISOString()}" && file_date <= "${endCur.toISOString()}"`,
+                filter: `user = "${user.id}" && file_date >= "${startCur}" && file_date <= "${endCur}"`,
                 requestKey: null,
                 fields: 'data,file_date' 
             });
 
             const recordsPrev = await pb.collection('tasks').getFullList({
-                filter: `user = "${user.id}" && file_date >= "${startPrev.toISOString()}" && file_date <= "${endPrev.toISOString()}"`,
+                filter: `user = "${user.id}" && file_date >= "${startPrev}" && file_date <= "${endPrev}"`,
                 requestKey: null,
                 fields: 'data,file_date'
             });
@@ -50,14 +67,11 @@ export default function DailyComparisonChart({ lang, refreshTrigger }: DailyComp
             const aggregate = (records: any[]) => {
                 const map = new Map<number, number>();
                 records.forEach(r => {
-                    const d = new Date(r.file_date);
-                    const day = d.getDate();
+                    const day = new Date(r.file_date).getDate();
                     if (Array.isArray(r.data)) {
                         r.data.forEach((task: any) => {
                             const hours = Number(task.time_spent);
-                            if (!isNaN(hours)) {
-                                map.set(day, (map.get(day) || 0) + hours);
-                            }
+                            if (!isNaN(hours)) map.set(day, (map.get(day) || 0) + hours);
                         });
                     }
                 });
@@ -67,40 +81,24 @@ export default function DailyComparisonChart({ lang, refreshTrigger }: DailyComp
             const curMap = aggregate(recordsCur);
             const prevMap = aggregate(recordsPrev);
 
-            const data = [];
-            let max = 0;
+            const data = []; let max = 0;
             for (let i = 1; i <= 31; i++) {
-                const c = curMap.get(i) || 0;
-                const p = prevMap.get(i) || 0;
-                if (c > max) max = c;
-                if (p > max) max = p;
+                const c = curMap.get(i) || 0; const p = prevMap.get(i) || 0;
+                if (c > max) max = c; if (p > max) max = p;
                 data.push({ day: i, current: c, prev: p });
             }
-
-            setChartData(data);
-            setMaxValue(Math.max(max, 5));
-
-        } catch (err) {
-            console.error("Chart data fetch error:", err);
-        } finally {
-            setLoading(false);
-        }
+            setChartData(data); setMaxValue(Math.max(max, 5));
+        } catch (err) { console.error(err); } finally { setLoading(false); }
     };
 
-    // SVG Constants
-    const width = 1000;
-    const height = 250;
-    const padding = 30;
-    const graphWidth = width - padding * 2;
-    const graphHeight = height - padding * 2;
-
+    const width = 1000; const height = 250; const padding = 30;
+    const graphWidth = width - padding * 2; const graphHeight = height - padding * 2;
     const getX = (day: number) => padding + ((day - 1) / 30) * graphWidth;
     const getY = (val: number) => height - padding - (val / (maxValue * 1.1)) * graphHeight;
 
     const makePath = (type: 'current' | 'prev') => {
         return chartData.map((d, i) => {
-            const x = getX(d.day);
-            const y = getY(type === 'current' ? d.current : d.prev);
+            const x = getX(d.day); const y = getY(type === 'current' ? d.current : d.prev);
             return `${i === 0 ? 'M' : 'L'} ${x},${y}`;
         }).join(' ');
     };
@@ -108,150 +106,37 @@ export default function DailyComparisonChart({ lang, refreshTrigger }: DailyComp
     const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
         if (!containerRef.current) return;
         const rect = containerRef.current.getBoundingClientRect();
-        const clientX = e.clientX - rect.left;
-        
-        // Convert clientX to SVG X
-        // The SVG scales to fit the container width, so we need the ratio
-        const scaleX = width / rect.width; // Ratio between SVG coord system and rendered pixels
-        const svgX = clientX * scaleX;
-
-        // Calculate nearest day index
-        // x = padding + (index / 30) * graphWidth
-        // index = (x - padding) / graphWidth * 30
-        const rawIndex = ((svgX - padding) / graphWidth) * 30;
-        let index = Math.round(rawIndex);
-
-        // Clamp
-        if (index < 0) index = 0;
-        if (index > 30) index = 30;
-
-        setHoveredDay(index + 1); // Days are 1-based
+        const x = (e.clientX - rect.left) * (width / rect.width);
+        let index = Math.round(((x - padding) / graphWidth) * 30);
+        if (index < 0) index = 0; if (index > 30) index = 30;
+        setHoveredDay(index + 1);
     };
 
-    const handleMouseLeave = () => {
-        setHoveredDay(null);
-    };
-
-    // Prepare Hover Data
     const activeData = hoveredDay ? chartData[hoveredDay - 1] : null;
 
     return (
         <div className="dashboard-card">
              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
                 <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
-                    <div style={{padding: '6px', background: '#f3f4f6', borderRadius: '6px', color: '#4b5563'}}>
-                         <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" /></svg>
-                    </div>
+                    <div style={{padding: '6px', background: '#f3f4f6', borderRadius: '6px', color: '#4b5563'}}><svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" /></svg></div>
                     <h3 style={{margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)'}}>{t.statsChartTitle}</h3>
                 </div>
-
-                {/* Legend */}
                 <div style={{display: 'flex', gap: '1rem', fontSize: '0.75rem', fontWeight: 500}}>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
-                        <span style={{width: '10px', height: '10px', borderRadius: '2px', background: getColor('primary')}}></span>
-                        {t.legendCurrent}
-                    </div>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
-                        <span style={{width: '10px', height: '10px', borderRadius: '2px', background: getColor('warning')}}></span>
-                        {t.legendPrev}
-                    </div>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}><span style={{width: '10px', height: '10px', borderRadius: '2px', background: getColor('primary')}}></span>{t.legendCurrent}</div>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}><span style={{width: '10px', height: '10px', borderRadius: '2px', background: getColor('warning')}}></span>{t.legendPrev}</div>
                 </div>
             </div>
-
-            <div 
-                ref={containerRef}
-                style={{width: '100%', height: '300px', minHeight: '180px', position: 'relative', cursor: 'crosshair'}}
-                onMouseMove={handleMouseMove}
-                onMouseLeave={handleMouseLeave}
-            >
-                {loading ? (
-                     <div style={{position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', color: 'var(--text-muted)'}}>
-                        {t.loading}
-                    </div>
-                ) : (
+            <div ref={containerRef} style={{width: '100%', height: '300px', position: 'relative', cursor: 'crosshair'}} onMouseMove={handleMouseMove} onMouseLeave={()=>setHoveredDay(null)}>
+                {loading ? <div style={{textAlign: 'center', padding: '5rem'}}>{t.loading}</div> : (
                     <>
-            {/* Tooltip */}
-            <div style={{
-                position: 'absolute',
-                top: activeData ? getY(activeData.current) - 70 : 0,
-                left: activeData ? (getX(activeData.day) / width) * 100 + '%' : '0',
-                transform: `translateX(-50%) ${activeData ? 'translateY(0)' : 'translateY(5px)'}`,
-                backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                border: '1px solid #e2e8f0',
-                borderRadius: '8px',
-                padding: '8px 12px',
-                boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
-                pointerEvents: 'none',
-                zIndex: 100,
-                minWidth: '120px',
-                transition: 'opacity 0.2s ease-in-out, transform 0.2s ease-out, left 0.1s ease-out, top 0.1s ease-out',
-                opacity: activeData ? 1 : 0
-            }}>
-                {activeData && (
-                    <>
-                        <div style={{fontSize: '0.7rem', color: '#64748b', marginBottom: '4px', fontWeight: 600}}>
-                            {activeData.day} {t.statsChartTitle.includes('месяц') ? '' : ''}
+                        <div style={{ position: 'absolute', top: activeData ? getY(activeData.current) - 70 : 0, left: activeData ? (getX(activeData.day) / width) * 100 + '%' : '0', transform: `translateX(-50%)`, backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '8px 12px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', pointerEvents: 'none', zIndex: 100, opacity: activeData ? 1 : 0, transition: 'opacity 0.2s' }}>
+                            {activeData && <div><div style={{fontSize: '0.7rem', fontWeight: 600}}>{activeData.day}</div><div>{t.legendCurrent}: {activeData.current.toFixed(1)}ч</div><div>{t.legendPrev}: {activeData.prev.toFixed(1)}ч</div></div>}
                         </div>
-                        <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
-                            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem'}}>
-                                <span style={{display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem'}}>
-                                    <span style={{width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#3b82f6'}}></span>
-                                    {t.legendCurrent}:
-                                </span>
-                                <span style={{fontWeight: 700, fontSize: '0.8rem'}}>{activeData.current.toFixed(1)}ч</span>
-                            </div>
-                            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem'}}>
-                                <span style={{display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem'}}>
-                                    <span style={{width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#94a3b8'}}></span>
-                                    {t.legendPrev}:
-                                </span>
-                                <span style={{fontWeight: 700, fontSize: '0.8rem'}}>{activeData.prev.toFixed(1)}ч</span>
-                            </div>
-                        </div>
-                    </>
-                )}
-            </div>
-
-                        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{width: '100%', height: '100%', overflow: 'visible'}}>
-                            {/* Grid Lines */}
-                            {[0, 0.25, 0.5, 0.75, 1].map((factor) => {
-                                 const val = maxValue * factor;
-                                 const y = getY(val);
-                                 return (
-                                     <g key={factor}>
-                                         <line x1={padding} y1={y} x2={width - padding} y2={y} stroke="#e5e7eb" strokeDasharray="4" />
-                                         <text x={padding - 5} y={y + 4} textAnchor="end" fontSize="10" fill="#9ca3af">{Math.round(val)}</text>
-                                     </g>
-                                 );
-                            })}
-
-                            {/* X Axis Labels */}
-                            {chartData.map((d) => (
-                                <text key={d.day} x={getX(d.day)} y={height - 5} textAnchor="middle" fontSize="9" fill="#9ca3af">{d.day}</text>
-                            ))}
-
-                            {/* Lines */}
+                        <svg viewBox={`0 0 ${width} ${height}`} style={{width: '100%', height: '100%', overflow: 'visible'}}>
+                            {[0, 0.25, 0.5, 0.75, 1].map(f => <line key={f} x1={padding} y1={getY(maxValue*f)} x2={width-padding} y2={getY(maxValue*f)} stroke="#e5e7eb" strokeDasharray="4" />)}
                             <path d={makePath('prev')} fill="none" stroke={getColor('warning')} strokeWidth="2" strokeOpacity="0.5" />
                             <path d={makePath('current')} fill="none" stroke={getColor('primary')} strokeWidth="3" />
-
-                            {/* Interactive Elements for Hover */}
-                            {activeData && (
-                                <g>
-                                    {/* Vertical Indicator Line */}
-                                    <line 
-                                        x1={getX(activeData.day)} 
-                                        y1={padding} 
-                                        x2={getX(activeData.day)} 
-                                        y2={height - padding} 
-                                        stroke="#94a3b8" 
-                                        strokeWidth="1" 
-                                        strokeDasharray="4"
-                                    />
-                                    {/* Active Points Highlight */}
-                                    <circle cx={getX(activeData.day)} cy={getY(activeData.prev)} r={5} fill={getColor('warning')} stroke="white" strokeWidth={2} />
-                                    <circle cx={getX(activeData.day)} cy={getY(activeData.current)} r={6} fill={getColor('primary')} stroke="white" strokeWidth={2} />
-                                </g>
-                            )}
+                            {activeData && <g><line x1={getX(activeData.day)} y1={padding} x2={getX(activeData.day)} y2={height-padding} stroke="#94a3b8" strokeDasharray="4" /><circle cx={getX(activeData.day)} cy={getY(activeData.prev)} r={5} fill={getColor('warning')} /><circle cx={getX(activeData.day)} cy={getY(activeData.current)} r={6} fill={getColor('primary')} /></g>}
                         </svg>
                     </>
                 )}

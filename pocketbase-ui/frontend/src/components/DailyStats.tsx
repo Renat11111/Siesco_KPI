@@ -2,105 +2,89 @@ import { useEffect, useState } from 'react';
 import pb from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
 import { getColor } from '../lib/colors';
-import { useSettings } from '../lib/SettingsContext';
 
 interface DailyStatsProps {
     lang: Language;
     refreshTrigger: number; 
 }
 
+interface StatusDefinition {
+    title: string;
+    color: string;
+}
+
 export default function DailyStats({ lang, refreshTrigger }: DailyStatsProps) {
     const t = translations[lang];
-    const { statuses, loading: settingsLoading } = useSettings();
     const [stats, setStats] = useState<Record<string, number>>({});
     const [totalHoursSpent, setTotalHoursSpent] = useState<number>(0); 
     const [loading, setLoading] = useState(false);
+    const [statusList, setStatusList] = useState<StatusDefinition[]>([]);
 
     useEffect(() => {
         fetchDailyStats();
-    }, [refreshTrigger, statuses]); // Refresh stats when statuses change or trigger fires
+
+        // Smart Realtime: update only if the task belongs to ME
+        pb.collection('tasks').subscribe('*', (e) => {
+             const currentUser = pb.authStore.record;
+             if (currentUser && e.record && e.record.user === currentUser.id) {
+                 // console.log("Relevant realtime update:", e.action);
+                 fetchDailyStats();
+             }
+        });
+
+        return () => {
+            pb.collection('tasks').unsubscribe('*');
+        };
+    }, [refreshTrigger]);
 
     const fetchDailyStats = async () => {
         const user = pb.authStore.record;
-        if (!user || statuses.length === 0) return;
+        if (!user) return;
 
         setLoading(true);
-        
         try {
-            // 1. Prepare definitions from global context
-            const definitions = statuses.map(s => ({
-                title: s.title,
-                color: getColor(s.color)
+            const statusRecords = await pb.collection('statuses').getFullList({ requestKey: null });
+            const definitions: StatusDefinition[] = statusRecords.map(r => ({
+                title: r.title,
+                color: getColor(r.color)
             }));
+            setStatusList(definitions);
 
-            // 2. Load tasks for today
             const now = new Date();
-            const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-            const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+            const y = now.getFullYear();
+            const m = String(now.getMonth() + 1).padStart(2, '0');
+            const d = String(now.getDate()).padStart(2, '0');
+            const todayStr = `${y}-${m}-${d}`;
 
             const records = await pb.collection('tasks').getFullList({
-                filter: `user = "${user.id}" && file_date >= "${startOfDay.toISOString()}" && file_date <= "${endOfDay.toISOString()}"`,
+                filter: `user = "${user.id}" && file_date >= "${todayStr} 00:00:00" && file_date <= "${todayStr} 23:59:59"`,
                 requestKey: null
             });
 
-            // 3. Calculate stats
             const counts: Record<string, number> = {};
             definitions.forEach(s => counts[s.title] = 0);
-            
             let hoursSum = 0;
 
             records.forEach(record => {
                 if (Array.isArray(record.data)) {
                     record.data.forEach((task: any) => {
                         const status = task.status?.trim();
-                        // Matching by Title (as stored in Excel data)
-                        if (counts.hasOwnProperty(status)) {
+                        if (definitions.some(d => d.title === status)) {
                             counts[status] = (counts[status] || 0) + 1;
                         }
                         const hours = Number(task.time_spent);
-                        if (!isNaN(hours)) {
-                            hoursSum += hours;
-                        }
+                        if (!isNaN(hours)) hoursSum += hours;
                     });
                 }
             });
 
             setStats(counts);
             setTotalHoursSpent(hoursSum);
-
         } catch (err) {
-            console.error("Failed to fetch daily stats", err);
+            console.error(err);
         } finally {
             setLoading(false);
         }
-    };
-
-    const tableStyle: React.CSSProperties = {
-        width: '100%',
-        borderCollapse: 'collapse',
-        fontSize: '0.85rem',
-    };
-
-    const thStyle: React.CSSProperties = {
-        textAlign: 'left',
-        padding: '3px 0',
-        borderBottom: '1px solid var(--border)',
-        color: 'var(--text-muted)',
-        fontWeight: 600,
-        fontSize: '0.7rem',
-        textTransform: 'uppercase'
-    };
-
-    const tdStyle: React.CSSProperties = {
-        padding: '3px 0',
-        borderBottom: '1px solid #f1f5f9',
-        color: 'var(--text-main)'
-    };
-
-    const countStyle: React.CSSProperties = {
-        fontWeight: 700,
-        color: 'var(--primary)',
-        fontSize: '1rem'
     };
 
     return (
@@ -113,48 +97,35 @@ export default function DailyStats({ lang, refreshTrigger }: DailyStatsProps) {
                         </div>
                         <h3 style={{margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)'}}>{t.statsTitle}</h3>
                     </div>
-                    
-                    <small className="date-badge">
-                        {new Date().toLocaleDateString(lang === 'ru' ? 'ru-RU' : (lang === 'az' ? 'az-Latn-AZ' : 'en-US'))}
-                    </small>
+                    <small className="date-badge">{new Date().toLocaleDateString(lang === 'ru' ? 'ru-RU' : (lang === 'az' ? 'az-Latn-AZ' : 'en-US'))}</small>
                 </div>
-                
                 {loading ? (
                     <div style={{fontSize: '0.9rem', color: 'var(--text-muted)'}}>{t.statsLoading}</div>
                 ) : (
-                    <div style={{overflowY: 'auto', flex: 1, minHeight: 0, paddingRight: '4px'}}> {/* Scroll container */}
-                        <table style={tableStyle}>
+                    <div style={{overflowY: 'auto', flex: 1, minHeight: 0, paddingRight: '4px'}}>
+                        <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem'}}>
                             <thead>
                                 <tr>
-                                    <th style={{...thStyle, position: 'sticky', top: 0, zIndex: 10, background: 'white'}}>{t.statsStatus}</th>
-                                    <th style={{...thStyle, textAlign: 'right', position: 'sticky', top: 0, zIndex: 10, background: 'white'}}>{t.statsCount}</th>
+                                    <th style={{textAlign: 'left', padding: '3px 0', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.7rem', textTransform: 'uppercase', position: 'sticky', top: 0, background: 'white'}}>{t.statsStatus}</th>
+                                    <th style={{textAlign: 'right', padding: '3px 0', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.7rem', textTransform: 'uppercase', position: 'sticky', top: 0, background: 'white'}}>{t.statsCount}</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {statuses.map(s => (
-                                    <tr key={s.id}>
-                                        <td style={tdStyle}>
-                                            <span style={{display: 'inline-flex', alignItems: 'center', gap: '8px'}}>
-                                                <span style={{width: '10px', height: '10px', borderRadius: '50%', backgroundColor: getColor(s.color)}}></span>
-                                                {s.title}
-                                            </span>
+                                {statusList.map(s => (
+                                    <tr key={s.title}>
+                                        <td style={{padding: '3px 0', borderBottom: '1px solid #f1f5f9', color: 'var(--text-main)'}}>
+                                            <span style={{display: 'inline-flex', alignItems: 'center', gap: '8px'}}><span style={{width: '10px', height: '10px', borderRadius: '50%', backgroundColor: s.color}}></span>{s.title}</span>
                                         </td>
-                                        <td style={{...tdStyle, textAlign: 'right'}}>
-                                            <span style={{...countStyle, fontSize: '0.9rem'}}>{stats[s.title] || 0}</span>
-                                        </td>
+                                        <td style={{padding: '3px 0', borderBottom: '1px solid #f1f5f9', color: 'var(--text-main)', textAlign: 'right'}}><span style={{fontWeight: 700, color: 'var(--primary)', fontSize: '0.9rem'}}>{stats[s.title] || 0}</span></td>
                                     </tr>
                                 ))}
                                 <tr style={{borderTop: '2px solid var(--border)'}}>
-                                    <td style={{...tdStyle, fontWeight: 700, paddingTop: '4px'}}>{t.statsTotal}</td>
-                                    <td style={{...tdStyle, textAlign: 'right', fontWeight: 700, fontSize: '1.1rem', paddingTop: '4px'}}>
-                                        {statuses.reduce((acc, s) => acc + (stats[s.title] || 0), 0)}
-                                    </td>
+                                    <td style={{padding: '3px 0', color: 'var(--text-main)', fontWeight: 700, paddingTop: '4px'}}>{t.statsTotal}</td>
+                                    <td style={{padding: '3px 0', color: 'var(--text-main)', textAlign: 'right', fontWeight: 700, fontSize: '1.1rem', paddingTop: '4px'}}>{statusList.reduce((acc, s) => acc + (stats[s.title] || 0), 0)}</td>
                                 </tr>
                                 <tr style={{borderTop: '1px solid var(--border)'}}>
-                                    <td style={{...tdStyle, fontWeight: 700, paddingTop: '4px'}}>{t.statsTotalHours}</td>
-                                    <td style={{...tdStyle, textAlign: 'right', fontWeight: 700, fontSize: '1.1rem', paddingTop: '4px'}}>
-                                        {totalHoursSpent.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
-                                    </td>
+                                    <td style={{padding: '3px 0', color: 'var(--text-main)', fontWeight: 700, paddingTop: '4px'}}>{t.statsTotalHours}</td>
+                                    <td style={{padding: '3px 0', color: 'var(--text-main)', textAlign: 'right', fontWeight: 700, fontSize: '1.1rem', paddingTop: '4px'}}>{totalHoursSpent.toFixed(1)}</td>
                                 </tr>
                             </tbody>
                         </table>

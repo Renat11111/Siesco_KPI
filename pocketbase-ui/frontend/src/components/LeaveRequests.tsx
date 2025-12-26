@@ -4,7 +4,6 @@ import { translations, Language } from '../lib/translations';
 
 interface LeaveRequestsProps {
     lang: Language;
-    user: any; // User passed from parent Auth component
 }
 
 interface LeaveRequest {
@@ -23,7 +22,7 @@ interface LeaveRequest {
     }
 }
 
-export default function LeaveRequests({ lang, user: initialUser }: LeaveRequestsProps) {
+export default function LeaveRequests({ lang }: LeaveRequestsProps) {
     const t = translations[lang];
     const [loading, setLoading] = useState(false);
     const [isFormSubmitting, setIsFormSubmitting] = useState(false);

@@ -1,19 +1,15 @@
+import { useState } from 'react';
 import './App.css';
 import Auth from './components/Auth';
-import { SettingsProvider, useSettings } from './lib/SettingsContext';
-
-function AppContent() {
-    const { lang, setLang } = useSettings();
-    return <Auth lang={lang} setLang={setLang} />;
-}
+import { Language } from './lib/translations';
 
 function App() {
+    const [lang, setLang] = useState<Language>('ru');
+
     return (
-        <SettingsProvider>
-            <div id="app">
-                <AppContent />
-            </div>
-        </SettingsProvider>
+        <div id="app">
+            <Auth lang={lang} setLang={setLang} />
+        </div>
     )
 }
 

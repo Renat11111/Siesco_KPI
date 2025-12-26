@@ -1,19 +1,21 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import pb, { getUserFiles, clearRankingCache } from '../lib/pocketbase';
+import pb, { getUserFiles, clearRankingCache, handleApiError } from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
 import DailyStats from './DailyStats';
 import MonthlyStats from './MonthlyStats';
 import ComparisonStats from './ComparisonStats';
-import { useSettings, TaskField, Status } from '../lib/SettingsContext';
-import { 
-    getFormattedDateForCheck, 
-    validateAndParseExcelRows 
-} from '../lib/excelUtils';
 
 interface TaskUploadProps {
     lang: Language;
-    user: any;
+}
+
+interface TaskField {
+    key: string;
+    title: string;
+    type: string;
+    required: boolean;
+    width?: string;
 }
 
 interface User {
@@ -22,9 +24,8 @@ interface User {
     email: string;
 }
 
-export default function TaskUpload({ lang, user }: TaskUploadProps) {
+export default function TaskUpload({ lang }: TaskUploadProps) {
     const t = translations[lang];
-    const { statuses, fields: taskFields, loading: settingsLoading } = useSettings();
 
     const [uploading, setUploading] = useState(false);
     const [message, setMessage] = useState('');
@@ -32,8 +33,18 @@ export default function TaskUpload({ lang, user }: TaskUploadProps) {
     const [detailedErrors, setDetailedErrors] = useState<string[]>([]);
     const [dragActive, setDragActive] = useState(false);
     const [refreshStats, setRefreshStats] = useState(0); 
+    const [validStatuses, setValidStatuses] = useState<string[]>([]);
+    const [taskFields, setTaskFields] = useState<TaskField[]>([]);
     
-    // Use local date string YYYY-MM-DD to match user's timezone
+    // Стабильный пользователь
+    const [currentUser, setCurrentUser] = useState(pb.authStore.record);
+    useEffect(() => {
+        const unsubscribe = pb.authStore.onChange((_token, record) => {
+            setCurrentUser(record);
+        });
+        return () => unsubscribe();
+    }, []);
+
     const getLocalDate = () => {
         const d = new Date();
         const offset = d.getTimezoneOffset() * 60000;
@@ -46,348 +57,220 @@ export default function TaskUpload({ lang, user }: TaskUploadProps) {
     const [selectedUserId, setSelectedUserId] = useState<string>('');
     const [uploadMode, setUploadMode] = useState<'upload' | 'delete'>('upload');
     
-    // Delete Mode States
     const [availableFiles, setAvailableFiles] = useState<{id: string, file_name: string}[]>([]);
     const [selectedFileToDelete, setSelectedFileToDelete] = useState<string>('');
     const [deletionReason, setDeletionReason] = useState('');
 
     const inputRef = useRef<HTMLInputElement>(null);
 
-    // Fetch files when entering delete mode or changing filters
     useEffect(() => {
         if (uploadMode === 'delete') {
-            const targetUser = (isSuperAdmin && selectedUserId) ? selectedUserId : user?.id;
+            const targetUser = selectedUserId || currentUser?.id;
             if (targetUser && fileDate) {
-                // Clear state immediately to show feedback
-                setAvailableFiles([]);
-                setSelectedFileToDelete('');
-                setError('');
-                setDetailedErrors([]);
-                
-                // Set loading state
                 setUploading(true);
-                setMessage(t.loading);
-
                 getUserFiles(targetUser, fileDate).then(files => {
                     setAvailableFiles(files);
-                    if (files.length > 0) {
-                        setSelectedFileToDelete(files[0].id);
-                        setMessage(''); // Clear loading message if files found
-                    } else {
-                        // If no files, we can either keep a message or clear it
-                        setMessage(''); 
-                    }
-                }).catch(err => {
-                    console.error("Error in useEffect fetching files:", err);
-                    setError(t.genericError);
-                }).finally(() => {
-                    setUploading(false);
-                });
+                    if (files.length > 0) setSelectedFileToDelete(files[0].id);
+                }).finally(() => setUploading(false));
             }
-        } else {
-            // If switched back to upload, clear messages that might be from delete mode
-            if (message === t.loading) setMessage('');
         }
-    }, [uploadMode, fileDate, selectedUserId, refreshStats]); // Refresh stats trigger re-fetch too
+    }, [uploadMode, fileDate, selectedUserId, refreshStats, currentUser?.id]);
 
     useEffect(() => {
         const loadInitialData = async () => {
-            if (user) {
-                setSelectedUserId(user.id);
-                if (user.superadmin) {
+            if (currentUser) {
+                setSelectedUserId(currentUser.id);
+                if (currentUser.superadmin) {
                     setIsSuperAdmin(true);
                     try {
-                        const allUsers = await pb.collection('users').getFullList({
-                            sort: 'name',
-                            requestKey: null
-                        });
-                        setUsers(allUsers.map(u => ({ id: u.id, name: u.name, email: u.email })));
-                    } catch (e) {
-                        console.error("Failed to load users list", e);
-                    }
+                        const allUsers = await pb.collection('users').getFullList<User>({ sort: 'name', requestKey: null });
+                        setUsers(allUsers);
+                    } catch (e) { console.error(e); }
                 }
             }
-        };
 
+            try {
+                const statusRecords = await pb.collection('statuses').getFullList({ requestKey: null });
+                setValidStatuses(statusRecords.map(r => r.title));
+
+                const fieldRecords = await pb.collection('task_fields').getFullList({ sort: 'order', requestKey: null });
+                setTaskFields(fieldRecords.map(r => ({
+                    key: r.key, title: r.title, type: r.type, required: r.required, width: r.width
+                })));
+            } catch (err) { console.error(err); }
+        };
         loadInitialData();
-    }, [user?.id]);
+    }, [currentUser?.id]);
 
     const handleFiles = (files: FileList | null) => {
         const file = files?.[0];
-        
-        if (inputRef.current) {
-            inputRef.current.value = '';
-        }
-
-        if (!file) return;
-
-        processFile(file);
+        if (inputRef.current) inputRef.current.value = '';
+        if (file) processFile(file);
     };
 
     const handleDeleteExisting = async () => {
-        if (!selectedFileToDelete || !deletionReason.trim()) {
-            alert("Please select a file and enter a reason.");
-            return;
-        }
-
+        if (!selectedFileToDelete || !deletionReason.trim()) return;
         const fileRecord = availableFiles.find(f => f.id === selectedFileToDelete);
-        if (!fileRecord) return;
-
-        if (!confirm(`${t.confirmDelete} "${fileRecord.file_name}"?`)) {
-            return;
-        }
+        if (!fileRecord || !confirm(`${t.confirmDelete} "${fileRecord.file_name}"?`)) return;
 
         setUploading(true);
-        setMessage(t.searchingDeleting);
-        setError('');
-
         try {
-            // 1. Fetch the full record to get the file
             const record = await pb.collection('tasks').getOne(selectedFileToDelete);
-            const currentUser = pb.authStore.record;
-
-            // 2. Fetch the file blob to archive it
             const fileUrl = pb.files.getUrl(record, record.excel_file);
             const res = await fetch(fileUrl);
-            if (!res.ok) throw new Error("Failed to download file for archiving");
             const blob = await res.blob();
 
-            // 3. Create Log entry
             const formData = new FormData();
             formData.append('file_name', record.file_name);
             formData.append('reason', deletionReason);
-            if (currentUser) {
-                formData.append('deleted_by', currentUser.id);
-            }
-            formData.append('excel_file', blob, record.excel_file); // Re-upload
+            if (currentUser) formData.append('deleted_by', currentUser.id);
+            formData.append('excel_file', blob, record.excel_file); 
 
             await pb.collection('deletion_logs').create(formData);
-
-            // 4. Delete original record
             await pb.collection('tasks').delete(record.id);
-
-            clearRankingCache(); // Clear stats cache
-            setMessage(`${t.fileDeleted} "${record.file_name}"`);
-            setDeletionReason(''); // Clear reason
-            setRefreshStats(prev => prev + 1); // This will trigger useEffect to reload file list
-            
-        } catch (err: any) {
-            console.error("Delete error:", err);
-            setError(err.message || t.genericError);
-        } finally {
-            setUploading(false);
-        }
+            clearRankingCache();
+            setMessage(t.fileDeleted);
+            setRefreshStats(prev => prev + 1); 
+        } catch (err: any) { setError(handleApiError(err, t)); } finally { setUploading(false); }
     };
 
-    const handleDrag = (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.type === "dragenter" || e.type === "dragover") {
-            setDragActive(true);
-        } else if (e.type === "dragleave") {
-            setDragActive(false);
-        }
+    const getFormattedDateForCheck = (iso: string) => {
+        const parts = iso.split('-');
+        return parts.length === 3 ? `${parts[2]}.${parts[1]}.${parts[0]}` : "";
     };
 
-    const handleDrop = (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setDragActive(false);
-        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-            handleFiles(e.dataTransfer.files);
-        }
-    };
-
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            handleFiles(e.target.files);
-        }
-    };
-
-    const onButtonClick = () => {
-        inputRef.current?.click();
+    const parseDateStrict = (excelDate: any): string | null => {
+        if (!excelDate) return null;
+        try {
+            if (typeof excelDate === 'number') {
+                 const date = new Date(Math.round((excelDate - 25569)*86400*1000));
+                 return date.toISOString();
+            }
+            if (typeof excelDate === 'string') {
+                const parts = excelDate.trim().split('.');
+                if (parts.length === 3) {
+                    const d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+                    d.setHours(12); return d.toISOString();
+                }
+                const d = new Date(excelDate);
+                if (!isNaN(d.getTime())) return d.toISOString();
+            }
+        } catch (e) { return null; }
+        return null;
     };
 
     const processFile = (file: File) => {
-        setUploading(true);
-        setMessage(t.validating);
-        setError('');
-        setDetailedErrors([]);
-
-        if (statuses.length === 0 || taskFields.length === 0) {
-            setError("Configuration error: Initial data not loaded. Refresh the page.");
-            setUploading(false);
-            if (inputRef.current) inputRef.current.value = '';
-            return;
+        setUploading(true); setMessage(t.validating); setError(''); setDetailedErrors([]);
+        if (validStatuses.length === 0 || taskFields.length === 0) {
+            setError("Configuration error."); setUploading(false); return;
         }
 
-        const requiredDatePrefix = getFormattedDateForCheck(fileDate);
-        if (!file.name.startsWith(requiredDatePrefix)) {
-            setError(`${t.errorPrefix} "${requiredDatePrefix}" (e.g., "${requiredDatePrefix}_report.xlsx").`);
-            setUploading(false);
-            if (inputRef.current) inputRef.current.value = '';
-            return;
+        const requiredPrefix = getFormattedDateForCheck(fileDate);
+        if (!file.name.startsWith(requiredPrefix)) {
+            setError(`${t.errorPrefix} "${requiredPrefix}"`); setUploading(false); return;
         }
 
-        // --- STRICT TARGET USER IDENTIFICATION ---
-        // If not superadmin, we MUST use the authenticated user ID
-        const targetUserId = (isSuperAdmin && selectedUserId) ? selectedUserId : user?.id;
-        
-        if (isSuperAdmin && user && targetUserId !== user.id) {
-            const targetUserName = users.find(u => u.id === targetUserId)?.name || targetUserId || "Unknown";
-            const confirmMsg = t.confirmUploadForOther as string;
-            if (confirmMsg) {
-                const confirmed = window.confirm(confirmMsg.replace("{name}", targetUserName));
-                if (!confirmed) {
-                    setUploading(false);
-                    if (inputRef.current) inputRef.current.value = '';
-                    return;
-                }
+        const targetUserId = selectedUserId || currentUser?.id;
+        if (isSuperAdmin && currentUser && targetUserId !== currentUser.id) {
+            const name = users.find(u => u.id === targetUserId)?.name || targetUserId;
+            // @ts-ignore
+            if (t.confirmUploadForOther && !window.confirm(t.confirmUploadForOther.replace("{name}", name))) {
+                setUploading(false); return;
             }
         }
 
         setMessage(t.reading);
-
-        if (statuses.length === 0 || taskFields.length === 0) {
-            setError("Configuration error: Settings not loaded yet. Please wait.");
-            setUploading(false);
-            return;
-        }
 
         const reader = new FileReader();
         reader.onload = async (evt) => {
             try {
                 const bstr = evt.target?.result;
                 const wb = XLSX.read(bstr, { type: 'binary' });
-                
-                let ws = wb.Sheets["Лист1"];
-                if (!ws) {
-                     ws = wb.Sheets[wb.SheetNames[0]];
-                }
-
-                if (!ws) {
-                    throw new Error("No sheets found in the Excel file.");
-                }
-
-                // Read all data
+                let ws = wb.Sheets["Лист1"] || wb.Sheets[wb.SheetNames[0]];
                 const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
                 
-                // Use universal helper for parsing and validation
-                const { parsedTasks, validationErrors } = validateAndParseExcelRows(
-                    data, 
-                    taskFields, 
-                    statuses, 
-                    fileDate, 
-                    t
-                );
-
-                if (validationErrors.length > 0) {
-                    setError(t.validationFailed);
-                    setDetailedErrors(validationErrors);
-                    setUploading(false);
-                    if (inputRef.current) inputRef.current.value = '';
-                    return;
-                }
-
-                const user = pb.authStore.record;
-                if (!user) {
-                    throw new Error(t.mustLogin);
-                }
-
-                if (validationErrors.length > 0) {
-                    setError(t.validationFailed);
-                    setDetailedErrors(validationErrors);
-                    setUploading(false);
-                    if (inputRef.current) inputRef.current.value = '';
-                    return;
-                }
-
-                if (parsedTasks.length === 0) {
-                    throw new Error(t.noValidTasks);
-                }
-
-                // --- LIMIT CHECK ---
-                const checkDateStart = new Date(fileDate);
-                checkDateStart.setHours(0, 0, 0, 0);
-                const checkDateEnd = new Date(fileDate);
-                checkDateEnd.setHours(23, 59, 59, 999);
-
-                // Use selectedUserId for superadmin operations, fallback to current user logic just in case
-                const targetUserId = selectedUserId || user.id;
-
-                const dailyUploads = await pb.collection('tasks').getList(1, 10, {
-                    filter: `user = "${targetUserId}" && file_date >= "${checkDateStart.toISOString()}" && file_date <= "${checkDateEnd.toISOString()}"`,
+                const headers = (data[0] as any[]).map(h => h?.toString().trim().toLowerCase());
+                const columnMapping: Record<string, number> = {};
+                taskFields.forEach(f => {
+                    const idx = headers.findIndex(h => h === f.title.toLowerCase());
+                    if (idx !== -1) columnMapping[f.key] = idx;
                 });
 
-                if (dailyUploads.totalItems >= 2) {
-                    setError(t.limitReached);
-                    setUploading(false);
-                    if (inputRef.current) inputRef.current.value = '';
-                    return;
-                }
+                const missing = taskFields.filter(f => f.required && columnMapping[f.key] === undefined);
+                if (missing.length > 0) throw new Error(`${t.infoColsTitle} ${missing.map(f=>f.title).join(", ")}`);
 
-                // --- DUPLICATE CHECK ---
-                const existingFiles = await pb.collection('tasks').getList(1, 1, {
-                    filter: `file_name = "${file.name}"`,
+                const rows = data.slice(1);
+                const parsedTasks: any[] = [];
+                const vErrors: string[] = [];
+
+                rows.forEach((row, i) => {
+                    const r = row as any[]; if (!r || r.length === 0) return;
+                    const isEmpty = Object.values(columnMapping).every(idx => !r[idx]); if (isEmpty) return;
+
+                    const task: any = {}; let rowOk = true;
+                    taskFields.forEach(f => {
+                        if (!rowOk) return;
+                        
+                        // Игнорируем системные поля, которых нет в Excel
+                        if (f.key === 'original_time_spent' || f.key === 'is_edited') return;
+
+                        const colIdx = columnMapping[f.key];
+                        if (colIdx === undefined) {
+                            if (f.required) { vErrors.push(`${t.row} ${i+2}: ${t.infoColsTitle} '${f.title}'`); rowOk = false; }
+                            return;
+                        }
+
+                        const val = r[colIdx];
+                        if (f.required && (val === undefined || val === null || val === "")) { 
+                            vErrors.push(`${t.row} ${i+2}: '${f.title}' ${t.fieldIsEmpty}`); rowOk = false; return; 
+                        }
+                        
+                        if (f.type === 'number') {
+                            const num = Number(val?.toString().replace(',', '.'));
+                            if (isNaN(num)) { vErrors.push(`${t.row} ${i+2}: '${f.title}' ${t.mustBeNumber}`); rowOk = false; }
+                            task[f.key] = num || 0;
+                        } else if (f.type === 'date') {
+                            task[f.key] = parseDateStrict(val) || new Date(fileDate).toISOString();
+                        } else if (f.key === 'status') {
+                            if (val && !validStatuses.includes(val.toString().trim())) {
+                                vErrors.push(`${t.row} ${i+2}: '${f.title}' ${t.invalidValue}`); rowOk = false;
+                            }
+                            task[f.key] = val?.toString().trim() || "";
+                        } else task[f.key] = val?.toString().trim() || "";
+                    });
+                    if (rowOk) parsedTasks.push(task);
                 });
 
-                if (existingFiles.totalItems > 0) {
-                    setError(t.fileAlreadyExists);
-                    setUploading(false);
-                    if (inputRef.current) inputRef.current.value = '';
-                    return;
-                }
+                if (vErrors.length > 0) { setError(t.validationFailed); setDetailedErrors(vErrors); setUploading(false); return; }
 
                 const formData = new FormData();
                 formData.append('excel_file', file);
                 formData.append('file_name', file.name);
-                
-                const finalDate = fileDate ? new Date(fileDate) : new Date();
-                formData.append('file_date', finalDate.toISOString());
-
+                formData.append('file_date', new Date(fileDate).toISOString());
                 formData.append('data', JSON.stringify(parsedTasks));
-                formData.append('user', targetUserId);
-
-                if (isSuperAdmin && user) {
-                    formData.append('uploaded_by', user.id);
-                }
-
-                setMessage(`${t.uploadingMsg} (${parsedTasks.length} ${t.tasksCount})...`);
+                formData.append('user', targetUserId || '');
+                if (isSuperAdmin && currentUser) formData.append('uploaded_by', currentUser.id);
 
                 await pb.collection('tasks').create(formData);
-                clearRankingCache(); // Clear stats cache
-
-                // --- AUDIT LOG FOR SUPERADMIN UPLOADS ---
-                if (isSuperAdmin && user) {
+                clearRankingCache(); 
+                
+                if (isSuperAdmin && currentUser) {
                     try {
-                        await pb.collection('upload_logs').create({
-                            file_name: file.name,
-                            uploaded_by: user.id,
-                            target_user: targetUserId
-                        });
+                        await pb.collection('upload_logs').create({ file_name: file.name, uploaded_by: currentUser.id, target_user: targetUserId });
                     } catch (logErr) {
                         console.error("Failed to create upload log:", logErr);
-                        // We don't block the UI flow here, as the main task upload succeeded
+                        // Non-blocking error
                     }
                 }
 
                 setMessage(`${t.successMsg} ${parsedTasks.length} ${t.tasksCount}.`);
                 setRefreshStats(prev => prev + 1); 
-                
-            } catch (err: any) {
-                console.error("Upload error:", err);
-                setError(err.message || t.genericError);
-            } finally {
-                setUploading(false);
-                if (inputRef.current) inputRef.current.value = '';
-            }
+            } catch (err: any) { setError(handleApiError(err, t)); } finally { setUploading(false); }
         };
         reader.readAsBinaryString(file);
     };
 
-    // Determine content for Status Cell (Bottom Left)
     let statusContent;
-    
     if (uploading) {
         statusContent = (
             <div className="status-card processing-card" style={{height: '100%', justifyContent: 'center'}}>
@@ -404,14 +287,12 @@ export default function TaskUpload({ lang, user }: TaskUploadProps) {
                 </div>
                 {detailedErrors.length > 0 && (
                     <ul className="error-list" style={{margin: 0, paddingLeft: '1.2rem'}}>
-                        {detailedErrors.map((err, idx) => (
-                            <li key={idx}>{err}</li>
-                        ))}
+                        {detailedErrors.map((err, idx) => <li key={idx}>{err}</li>)}
                     </ul>
                 )}
             </div>
         );
-    } else if (message && !message.includes("Validating") && !message.includes("Reading")) {
+    } else if (message) {
         statusContent = (
             <div className="status-card success" style={{height: '100%', justifyContent: 'center'}}>
                 <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
@@ -421,12 +302,7 @@ export default function TaskUpload({ lang, user }: TaskUploadProps) {
             </div>
         );
     } else {
-        // Dynamic Info State
-        const requiredFieldsText = taskFields
-            .filter(f => f.required)
-            .map(f => f.title)
-            .join(", ");
-
+        const requiredFieldsText = taskFields.filter(f => f.required).map(f => f.title).join(", ");
         statusContent = (
             <div className="status-card info" style={{height: '100%'}}>
                 <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem'}}>
@@ -439,9 +315,7 @@ export default function TaskUpload({ lang, user }: TaskUploadProps) {
                     <li>{t.ruleName}</li>
                     <li>{t.ruleLimit}</li>
                     <li>{t.ruleUnique}</li>
-                    <li>
-                        {t.infoColsTitle} {requiredFieldsText}
-                    </li>
+                    <li>{t.infoColsTitle} {requiredFieldsText}</li>
                 </ul>
             </div>
         );
@@ -449,228 +323,42 @@ export default function TaskUpload({ lang, user }: TaskUploadProps) {
 
     return (
         <div className="upload-grid">
-            
-            {/* 1. Combined Upload & Status Card (Top Left) */}
             <div className="dashboard-card grid-cell-upload" style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
-                {/* Header & Upload Zone */}
                 <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
                     <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                         <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
                             <div style={{padding: '6px', background: '#eff6ff', borderRadius: '6px', color: 'var(--primary)'}}>
-                                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
                             </div>
-                            <h3 style={{margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)', whiteSpace: 'nowrap'}}>{t.uploadTitle}</h3>
+                            <h3 style={{margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)'}}>{t.uploadTitle}</h3>
                         </div>
                         <div style={{display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
-                            {isSuperAdmin && users.length > 0 && (
-                                <select 
-                                    className="input input-compact"
-                                    value={selectedUserId}
-                                    onChange={(e) => setSelectedUserId(e.target.value)}
-                                    style={{maxWidth: '150px'}}
-                                >
-                                    {users.map(u => (
-                                        <option key={u.id} value={u.id}>
-                                            {u.name || u.email}
-                                        </option>
-                                    ))}
-                                </select>
-                            )}
-                            {isSuperAdmin && (
-                                <select
-                                    className="input input-compact"
-                                    value={uploadMode}
-                                    onChange={(e) => setUploadMode(e.target.value as 'upload' | 'delete')}
-                                    style={{ 
-                                        maxWidth: '120px', 
-                                        borderColor: uploadMode === 'delete' ? '#ef4444' : undefined,
-                                        color: uploadMode === 'delete' ? '#ef4444' : undefined
-                                    }}
-                                >
-                                    <option value="upload">{t.modeUpload}</option>
-                                    <option value="delete">{t.modeDelete}</option>
-                                </select>
-                            )}
-                            {isSuperAdmin ? (
-                                <input 
-                                    className="input input-date-compact"
-                                    type="date" 
-                                    value={fileDate}
-                                    onChange={(e) => setFileDate(e.target.value)}
-                                />
-                            ) : (
-                                <small className="date-badge">
-                                    {getFormattedDateForCheck(fileDate)}
-                                </small>
-                            )}
+                            {isSuperAdmin && users.length > 0 && <select className="input input-compact" value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} style={{maxWidth: '150px'}}>{users.map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}</select>}
+                            {isSuperAdmin && <select className="input input-compact" value={uploadMode} onChange={(e) => setUploadMode(e.target.value as any)} style={{ maxWidth: '120px' }}><option value="upload">{t.modeUpload}</option><option value="delete">{t.modeDelete}</option></select>}
+                            <input className="input input-date-compact" type="date" value={fileDate} onChange={(e) => setFileDate(e.target.value)} disabled={!isSuperAdmin} />
                         </div>
                     </div>
-                    
                     {uploadMode === 'upload' ? (
-                        <div 
-                            className={`drop-zone ${dragActive ? 'active' : ''}`}
-                            onDragEnter={handleDrag}
-                            onDragLeave={handleDrag}
-                            onDragOver={handleDrag}
-                            onDrop={handleDrop}
-                            onClick={onButtonClick}
-                            style={{minHeight: '120px'}}
-                        >
-                            <input 
-                                ref={inputRef}
-                                type="file" 
-                                accept=".xlsx, .xls" 
-                                onChange={handleChange}
-                                style={{ display: 'none' }} 
-                                disabled={uploading}
-                            />
-                            
-                            <svg className="drop-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                            </svg>
-                            
-                            <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
-                                <p className="drop-text">
-                                    {uploading ? t.processing : t.dragDrop}
-                                </p>
-                                {!uploading && (
-                                    <p className="drop-hint">
-                                        {t.orBrowse}
-                                    </p>
-                                )}
-                            </div>
-                            
-                            {!uploading && <button className="btn drop-btn">{t.selectFile}</button>}
+                        <div className={`drop-zone ${dragActive ? 'active' : ''}`} onDragOver={(e)=>{e.preventDefault(); setDragActive(true)}} onDragLeave={()=>setDragActive(false)} onDrop={(e)=>{e.preventDefault(); setDragActive(false); handleFiles(e.dataTransfer.files)}} onClick={()=>inputRef.current?.click()} style={{minHeight: '120px'}}>
+                            <input ref={inputRef} type="file" accept=".xlsx, .xls" onChange={(e)=>handleFiles(e.target.files)} style={{ display: 'none' }} disabled={uploading} />
+                            <svg className="drop-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                            <p className="drop-text">{uploading ? t.processing : t.dragDrop}</p>
                         </div>
                     ) : (
-                        <div className="delete-zone" style={{
-                            minHeight: '120px', 
-                            border: '2px dashed #fca5a5', 
-                            borderRadius: '12px', 
-                            padding: '1.2rem',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '1rem',
-                            background: '#fff1f1'
-                        }}>
-                            <div style={{
-                                display: 'grid', 
-                                gridTemplateColumns: '1fr 1fr', 
-                                gap: '1rem',
-                                alignItems: 'end' // Это выровняет колонки по нижнему краю
-                            }}>
-                                <div style={{display: 'flex', flexDirection: 'column', gap: '0.4rem', height: '100%', justifyContent: 'flex-end'}}>
-                                    <label style={{
-                                        fontSize: '0.7rem', 
-                                        fontWeight: 800, 
-                                        color: '#b91c1c', 
-                                        textTransform: 'uppercase',
-                                        letterSpacing: '0.025em',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '4px',
-                                        marginBottom: 'auto' // Позволяет тексту занимать верхнюю часть, а инпуту оставаться внизу
-                                    }}>
-                                        <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                                        {t.selectFile}
-                                    </label>
-                                    <select 
-                                        className="input input-compact" 
-                                        value={selectedFileToDelete} 
-                                        onChange={(e) => setSelectedFileToDelete(e.target.value)}
-                                        disabled={uploading || availableFiles.length === 0}
-                                        style={{
-                                            width: '100%', 
-                                            borderColor: '#fecaca',
-                                            height: '38px',
-                                            fontSize: '0.85rem',
-                                            background: 'white'
-                                        }}
-                                    >
-                                        {availableFiles.length === 0 ? (
-                                            <option value="">{t.noTasks}</option>
-                                        ) : (
-                                            availableFiles.map(f => (
-                                                <option key={f.id} value={f.id}>{f.file_name}</option>
-                                            ))
-                                        )}
-                                    </select>
-                                </div>
-                                
-                                <div style={{display: 'flex', flexDirection: 'column', gap: '0.4rem', height: '100%', justifyContent: 'flex-end'}}>
-                                    <label style={{
-                                        fontSize: '0.7rem', 
-                                        fontWeight: 800, 
-                                        color: '#b91c1c', 
-                                        textTransform: 'uppercase',
-                                        letterSpacing: '0.025em',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '4px',
-                                        marginBottom: 'auto'
-                                    }}>
-                                        <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                                        {t.enterReason}
-                                    </label>
-                                    <input 
-                                        className="input input-compact" 
-                                        placeholder="..." 
-                                        value={deletionReason} 
-                                        onChange={(e) => setDeletionReason(e.target.value)}
-                                        disabled={uploading || availableFiles.length === 0}
-                                        style={{
-                                            width: '100%', 
-                                            borderColor: '#fecaca',
-                                            height: '38px',
-                                            fontSize: '0.85rem',
-                                            background: 'white'
-                                        }}
-                                    />
-                                </div>
+                        <div className="delete-zone" style={{ border: '2px dashed #fca5a5', borderRadius: '12px', padding: '1.2rem', background: '#fff1f1', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <select className="input input-compact" value={selectedFileToDelete} onChange={(e) => setSelectedFileToDelete(e.target.value)} disabled={uploading || availableFiles.length === 0} style={{width: '100%', background: 'white'}}>{availableFiles.length === 0 ? <option value="">{t.noTasks}</option> : availableFiles.map(f => <option key={f.id} value={f.id}>{f.file_name}</option>)}</select>
+                                <input className="input input-compact" placeholder={t.enterReason} value={deletionReason} onChange={(e) => setDeletionReason(e.target.value)} style={{width: '100%', background: 'white'}} />
                             </div>
-
-                            <button 
-                                className="btn" 
-                                style={{
-                                    background: (uploading || availableFiles.length === 0 || !deletionReason.trim()) ? '#fecaca' : '#ef4444', 
-                                    color: 'white', 
-                                    border: 'none',
-                                    height: '38px',
-                                    fontWeight: 700,
-                                    fontSize: '0.85rem',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    gap: '8px',
-                                    boxShadow: '0 2px 4px rgba(239, 68, 68, 0.1)',
-                                    transition: 'all 0.2s'
-                                }}
-                                onClick={handleDeleteExisting}
-                                disabled={uploading || availableFiles.length === 0 || !deletionReason.trim()}
-                            >
-                                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                {uploading ? t.processing : t.modeDelete}
-                            </button>
+                            <button className="btn" onClick={handleDeleteExisting} style={{background: '#ef4444', color: 'white', fontWeight: 700}}>{t.modeDelete}</button>
                         </div>
                     )}
                 </div>
-
-                {/* Status / Info Section (Fills remaining height) */}
-                <div style={{flex: 1, minHeight: 0, overflowY: 'auto'}}> 
-                    {statusContent}
-                </div>
+                <div style={{flex: 1}}>{statusContent}</div>
             </div>
-
-            {/* 3. Comparison Stats (Bottom Left) */}
-            <ComparisonStats lang={lang} refreshTrigger={refreshStats} style={{}} className="grid-cell-comp" />
-
-            {/* 4. Daily Stats (Right Column - Spans Top & Middle) */}
-            <div className="grid-cell-daily">
-                <DailyStats lang={lang} refreshTrigger={refreshStats} />
-            </div>
-
-            {/* 5. Monthly Stats (Bottom Right) */}
-            <MonthlyStats lang={lang} refreshTrigger={refreshStats} style={{}} className="grid-cell-monthly" />
+            <ComparisonStats lang={lang} refreshTrigger={refreshStats} className="grid-cell-comp" />
+            <div className="grid-cell-daily"><DailyStats lang={lang} refreshTrigger={refreshStats} /></div>
+            <MonthlyStats lang={lang} refreshTrigger={refreshStats} className="grid-cell-monthly" />
         </div>
     );
 }

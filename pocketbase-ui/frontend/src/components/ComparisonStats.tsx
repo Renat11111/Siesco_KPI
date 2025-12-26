@@ -16,6 +16,18 @@ export default function ComparisonStats({ lang, refreshTrigger, style, className
 
     useEffect(() => {
         fetchComparisonStats();
+
+        // Realtime subscription
+        pb.collection('tasks').subscribe('*', (e) => {
+            const currentUser = pb.authStore.record;
+            if (currentUser && e.record && e.record.user === currentUser.id) {
+                fetchComparisonStats();
+            }
+        });
+
+        return () => {
+            pb.collection('tasks').unsubscribe('*');
+        };
     }, [refreshTrigger]);
 
     const fetchComparisonStats = async () => {
@@ -26,14 +38,16 @@ export default function ComparisonStats({ lang, refreshTrigger, style, className
         
         try {
             const now = new Date();
-            // Calculate Previous Month
-            // If current is Dec (11), prev is Nov (10). 
-            // If current is Jan (0), prev is Dec (-1) of prev year, Date handles this automatically.
-            const startOfPrevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
-            const endOfPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+            const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            const y = prevMonth.getFullYear();
+            const m = String(prevMonth.getMonth() + 1).padStart(2, '0');
+            const lastDay = new Date(y, prevMonth.getMonth() + 1, 0).getDate();
+
+            const startStr = `${y}-${m}-01 00:00:00`;
+            const endStr = `${y}-${m}-${lastDay} 23:59:59`;
 
             const records = await pb.collection('tasks').getFullList({
-                filter: `user = "${user.id}" && file_date >= "${startOfPrevMonth.toISOString()}" && file_date <= "${endOfPrevMonth.toISOString()}"`,
+                filter: `user = "${user.id}" && file_date >= "${startStr}" && file_date <= "${endStr}"`,
                 requestKey: null,
                 fields: 'data'
             });

@@ -16,6 +16,18 @@ export default function MonthlyStats({ lang, refreshTrigger, style, className }:
 
     useEffect(() => {
         fetchMonthlyStats();
+
+        // Realtime subscription
+        pb.collection('tasks').subscribe('*', (e) => {
+            const user = pb.authStore.record;
+            if (user && e.record && e.record.user === user.id) {
+                fetchMonthlyStats();
+            }
+        });
+
+        return () => {
+            pb.collection('tasks').unsubscribe('*');
+        };
     }, [refreshTrigger]);
 
     const fetchMonthlyStats = async () => {
@@ -26,18 +38,17 @@ export default function MonthlyStats({ lang, refreshTrigger, style, className }:
         
         try {
             const now = new Date();
-            // Start of month: 1st day, 00:00:00
-            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-            // End of month: Last day, 23:59:59
-            const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+            const y = now.getFullYear();
+            const m = String(now.getMonth() + 1).padStart(2, '0');
+            const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
+            
+            const startStr = `${y}-${m}-01 00:00:00`;
+            const endStr = `${y}-${m}-${lastDay} 23:59:59`;
 
-            // We need to fetch ALL tasks for this month to sum them up. 
-            // Warning: If a user has thousands of tasks per month, this might need optimization (aggregation query).
-            // But for a typical user report system, getFullList is fine.
             const records = await pb.collection('tasks').getFullList({
-                filter: `user = "${user.id}" && file_date >= "${startOfMonth.toISOString()}" && file_date <= "${endOfMonth.toISOString()}"`,
+                filter: `user = "${user.id}" && file_date >= "${startStr}" && file_date <= "${endStr}"`,
                 requestKey: null,
-                fields: 'data' // Optimization: fetch only the data field
+                fields: 'data' 
             });
 
             let sum = 0;

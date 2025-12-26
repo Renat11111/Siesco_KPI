@@ -24,6 +24,15 @@ export default function YearlyRankingChart({ lang }: YearlyRankingChartProps) {
 
     useEffect(() => {
         fetchRanking();
+
+        // Subscribe to global signaling collection
+        pb.collection('ranking_updates').subscribe('*', (e) => {
+            fetchRanking();
+        });
+
+        return () => {
+            pb.collection('ranking_updates').unsubscribe('*');
+        };
     }, []);
 
     const fetchRanking = async () => {

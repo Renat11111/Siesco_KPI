@@ -15,6 +15,15 @@ export interface TranslationKeys {
     dontHaveAccount: string;
     alreadyHaveAccount: string;
     passwordsDoNotMatch: string;
+    changePassword: string;
+    oldPassword: string;
+    newPassword: string;
+    newPasswordConfirm: string;
+    passwordChangedSuccess: string;
+    cancel: string;
+    save: string;
+
+    // Tabs
     tabUpload: string;
     tabAnalytics: string;
     tabView: string;
@@ -130,6 +139,13 @@ export const translations: Record<Language, TranslationKeys> = {
         dontHaveAccount: "Нет аккаунта? Зарегистрироваться",
         alreadyHaveAccount: "Уже есть аккаунт? Войти",
         passwordsDoNotMatch: "Пароли не совпадают",
+        changePassword: "Сменить пароль",
+        oldPassword: "Старый пароль",
+        newPassword: "Новый пароль",
+        newPasswordConfirm: "Подтвердите новый пароль",
+        passwordChangedSuccess: "Пароль успешно изменен",
+        cancel: "Отмена",
+        save: "Сохранить",
         
         // Tabs
         tabUpload: "Загрузить отчет",
@@ -254,6 +270,13 @@ export const translations: Record<Language, TranslationKeys> = {
         dontHaveAccount: "Hesabınız yoxdur? Qeydiyyatdan keçin",
         alreadyHaveAccount: "Artıq hesabınız var? Giriş",
         passwordsDoNotMatch: "Şifrələr uyğun gəlmir",
+        changePassword: "Şifrəni dəyiş",
+        oldPassword: "Köhnə şifrə",
+        newPassword: "Yeni şifrə",
+        newPasswordConfirm: "Yeni şifrəni təsdiqləyin",
+        passwordChangedSuccess: "Şifrə uğurla dəyişdirildi",
+        cancel: "Ləğv et",
+        save: "Yadda saxla",
 
         // Tabs
         tabUpload: "Hesabat yüklə",
@@ -378,6 +401,13 @@ export const translations: Record<Language, TranslationKeys> = {
         dontHaveAccount: "Don't have an account? Register",
         alreadyHaveAccount: "Already have an account? Login",
         passwordsDoNotMatch: "Passwords do not match",
+        changePassword: "Change Password",
+        oldPassword: "Old Password",
+        newPassword: "New Password",
+        newPasswordConfirm: "Confirm New Password",
+        passwordChangedSuccess: "Password changed successfully",
+        cancel: "Cancel",
+        save: "Save",
 
         // Tabs
         tabUpload: "Upload Report",

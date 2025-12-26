@@ -6,6 +6,8 @@
 *.dylib
 Siesco_KPI_Backup_*.zip
 pocketbase-ui/build/bin/
+build/
+*.zip
 
 # PocketBase Data
 pb_data/

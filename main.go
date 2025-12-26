@@ -274,12 +274,19 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 	if err != nil {
 		deletionLogs = core.NewBaseCollection("deletion_logs")
 		deletionLogs.ListRule = types.Pointer("@request.auth.superadmin = true")
+		deletionLogs.CreateRule = types.Pointer("@request.auth.superadmin = true") // Fix: Allow creation
 		deletionLogs.Fields.Add(&core.TextField{Name: "file_name", Required: true})
 		deletionLogs.Fields.Add(&core.TextField{Name: "reason", Required: true})
 		deletionLogs.Fields.Add(&core.RelationField{ Name: "deleted_by", CollectionId: users.Id, MaxSelect: 1 })
 		deletionLogs.Fields.Add(&core.FileField{ Name: "excel_file", MaxSelect: 1, MimeTypes: []string{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/vnd.ms-excel"}})
 		deletionLogs.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
 		if err := app.Save(deletionLogs); err != nil { return fmt.Errorf("failed to create deletion_logs: %w", err) }
+	} else {
+		// Update existing rule if needed
+		if deletionLogs.CreateRule == nil || *deletionLogs.CreateRule != "@request.auth.superadmin = true" {
+			deletionLogs.CreateRule = types.Pointer("@request.auth.superadmin = true")
+			app.Save(deletionLogs)
+		}
 	}
 
 	// --- 2.2 Создание коллекции 'upload_logs' ---
@@ -287,11 +294,18 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 	if err != nil {
 		uploadLogs = core.NewBaseCollection("upload_logs")
 		uploadLogs.ListRule = types.Pointer("@request.auth.superadmin = true")
+		uploadLogs.CreateRule = types.Pointer("@request.auth.superadmin = true") // Fix: Allow creation
 		uploadLogs.Fields.Add(&core.TextField{Name: "file_name", Required: true})
 		uploadLogs.Fields.Add(&core.RelationField{Name: "uploaded_by", CollectionId: users.Id, MaxSelect: 1})
 		uploadLogs.Fields.Add(&core.RelationField{Name: "target_user", CollectionId: users.Id, MaxSelect: 1})
 		uploadLogs.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
 		if err := app.Save(uploadLogs); err != nil { return fmt.Errorf("failed to create upload_logs: %w", err) }
+	} else {
+		// Update existing rule
+		if uploadLogs.CreateRule == nil || *uploadLogs.CreateRule != "@request.auth.superadmin = true" {
+			uploadLogs.CreateRule = types.Pointer("@request.auth.superadmin = true")
+			app.Save(uploadLogs)
+		}
 	}
 
 	// --- 3. Чтение config.json ---
@@ -384,6 +398,46 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 			return fmt.Errorf("failed to create monthly view: %w", err)
 		}
 	}
+
+	// --- 7. Signaling Collection 'ranking_updates' (Realtime Broadcast) ---
+	rankingUpdates, err := app.FindCollectionByNameOrId("ranking_updates")
+	if err != nil {
+		rankingUpdates = core.NewBaseCollection("ranking_updates")
+		// Allow everyone to read (subscribe), allow everyone to create (to be safe)
+		rankingUpdates.ListRule = types.Pointer("@request.auth.id != ''")
+		rankingUpdates.ViewRule = types.Pointer("@request.auth.id != ''")
+		rankingUpdates.CreateRule = types.Pointer("@request.auth.id != ''") 
+		if err := app.Save(rankingUpdates); err != nil { return fmt.Errorf("failed to create ranking_updates: %w", err) }
+	}
+
+	// --- 8. Hooks for Realtime Signaling (Optimized) ---
+	// Reuse a single record to keep DB clean. Update triggers 'update' event which works for subscribers.
+	triggerSignal := func() {
+		collection, _ := app.FindCollectionByNameOrId("ranking_updates")
+		if collection == nil { return }
+
+		// Try to find ANY existing record
+		record, _ := app.FindFirstRecordByFilter("ranking_updates", "id != ''")
+		if record == nil {
+			// Create first signal record if empty
+			record = core.NewRecord(collection)
+		}
+		// Saving updates the 'updated' timestamp, triggering the realtime event
+		app.Save(record)
+	}
+
+	app.OnRecordAfterCreateSuccess("tasks").BindFunc(func(e *core.RecordEvent) error {
+		triggerSignal()
+		return e.Next()
+	})
+	app.OnRecordAfterUpdateSuccess("tasks").BindFunc(func(e *core.RecordEvent) error {
+		triggerSignal()
+		return e.Next()
+	})
+	app.OnRecordAfterDeleteSuccess("tasks").BindFunc(func(e *core.RecordEvent) error {
+		triggerSignal()
+		return e.Next()
+	})
 
 	return nil
 }

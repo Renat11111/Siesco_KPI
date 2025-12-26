@@ -21,30 +21,32 @@ export const clearRankingCache = () => {
 };
 
 export const getMonthlyRanking = async (month: string): Promise<RankingItem[]> => {
-    const cacheKey = `monthly_${month}`;
-    if (rankingCache.has(cacheKey)) {
-        return rankingCache.get(cacheKey)!;
-    }
+    // Disable cache to ensure Realtime updates work perfectly
+    // const cacheKey = `monthly_${month}`;
+    // if (rankingCache.has(cacheKey)) {
+    //     return rankingCache.get(cacheKey)!;
+    // }
 
     const data = await pb.send<RankingItem[]>('/api/kpi/ranking', {
         params: { month }
     });
     
-    rankingCache.set(cacheKey, data);
+    // rankingCache.set(cacheKey, data);
     return data;
 };
 
 export const getYearlyRanking = async (year: string): Promise<RankingItem[]> => {
-    const cacheKey = `yearly_${year}`;
-    if (rankingCache.has(cacheKey)) {
-        return rankingCache.get(cacheKey)!;
-    }
+    // Disable cache
+    // const cacheKey = `yearly_${year}`;
+    // if (rankingCache.has(cacheKey)) {
+    //     return rankingCache.get(cacheKey)!;
+    // }
 
     const data = await pb.send<RankingItem[]>('/api/kpi/yearly-ranking', {
         params: { year }
     });
 
-    rankingCache.set(cacheKey, data);
+    // rankingCache.set(cacheKey, data);
     return data;
 };
 

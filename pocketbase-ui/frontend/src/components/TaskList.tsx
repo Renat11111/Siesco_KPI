@@ -2,8 +2,21 @@ import { useEffect, useState, useMemo } from 'react';
 import pb, { getActualTasks, clearRankingCache } from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
 import { getColor } from '../lib/colors';
-import { useSettings, TaskField, Status } from '../lib/SettingsContext';
-import { useTaskFilters } from '../hooks/useTaskFilters';
+
+interface TaskField {
+    key: string;
+    title: string;
+    type: string;
+    width: string;
+    filterable: boolean;
+    order: number; // Added order
+}
+
+interface Status {
+    title: string;
+    slug: string;
+    color: string;
+}
 
 interface User {
     id: string;
@@ -19,14 +32,14 @@ type Task = Record<string, any> & {
 
 interface TaskListProps {
     lang: Language;
-    user: any;
 }
 
-export default function TaskList({ lang, user }: TaskListProps) {
+export default function TaskList({ lang }: TaskListProps) {
     const t = translations[lang];
-    const { statuses, fields, loading: settingsLoading } = useSettings();
 
     const [tasks, setTasks] = useState<Task[]>([]);
+    const [fields, setFields] = useState<TaskField[]>([]);
+    const [statuses, setStatuses] = useState<Status[]>([]);
     
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -34,6 +47,12 @@ export default function TaskList({ lang, user }: TaskListProps) {
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     
+    // Dynamic filters for each field: key -> value
+    const [filters, setFilters] = useState<Record<string, string>>({});
+    
+    // State to manage open/close of multi-select dropdowns
+    const [openDropdowns, setOpenDropdowns] = useState<Record<string, boolean>>({});
+
     // --- Admin/Coordinator Logic ---
     const [isAdminOrCoordinator, setIsAdminOrCoordinator] = useState(false);
     const [users, setUsers] = useState<User[]>([]);
@@ -41,21 +60,9 @@ export default function TaskList({ lang, user }: TaskListProps) {
     const [showUnfinishedOnly, setShowUnfinishedOnly] = useState(false);
     const [showGroupedCompleted, setShowGroupedCompleted] = useState(false);
 
-    // Use our custom hook for filtering and totals
-    const {
-        filters,
-        handleFilterChange,
-        toggleStatusFilter,
-        clearFilters,
-        openDropdowns,
-        setOpenDropdowns,
-        toggleDropdown,
-        filteredTasks,
-        totals
-    } = useTaskFilters(tasks, fields, statuses, lang);
-
     useEffect(() => {
         const checkUserRole = async () => {
+             const user = pb.authStore.record;
              if (user) {
                  setSelectedUserId(user.id); // Default to self
                  if (user.superadmin || user.is_coordinator) {
@@ -74,6 +81,7 @@ export default function TaskList({ lang, user }: TaskListProps) {
         };
 
         checkUserRole();
+        loadConfig();
         
         const now = new Date();
         const start = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -92,15 +100,65 @@ export default function TaskList({ lang, user }: TaskListProps) {
         setStartDate(initialStartDate);
         setEndDate(initialEndDate);
         
-        if (user?.id) {
-            fetchTasks(initialStartDate, initialEndDate, user.id, false, false); 
+        fetchTasks(initialStartDate, initialEndDate, pb.authStore.record?.id, false, false); // Default to history mode
+    }, []);
+
+    // Realtime Subscription
+    useEffect(() => {
+        const handleRealtime = (e: any) => {
+            // Logic: Update if the changed record belongs to the user currently being viewed (selectedUserId)
+            // Or if we are viewing "All users" (not implemented yet, but good for future)
+            // For now, strict check on user ID ensures we don't refresh for unrelated events.
+            const targetUser = selectedUserId || pb.authStore.record?.id;
+            
+            if (targetUser && e.record && e.record.user === targetUser) {
+                // Call fetchTasks with CURRENT state values (captured in closure by useEffect dependencies)
+                fetchTasks(startDate, endDate, selectedUserId, showUnfinishedOnly, showGroupedCompleted);
+            }
+        };
+
+        pb.collection('tasks').subscribe('*', handleRealtime);
+
+        return () => {
+            pb.collection('tasks').unsubscribe('*');
+        };
+    }, [selectedUserId, startDate, endDate, showUnfinishedOnly, showGroupedCompleted]); // Re-subscribe when filters change to keep closure fresh
+
+    const loadConfig = async () => {
+        try {
+            const fieldsRes = await pb.collection('task_fields').getFullList({ sort: 'order' });
+            // Map the response to our interface
+            const mappedFields: TaskField[] = fieldsRes.map((r: any) => ({
+                key: r.key,
+                title: r.title,
+                type: r.type,
+                width: r.width || 'auto',
+                filterable: r.filterable ?? true,
+                order: r.order || 0
+            }));
+
+            // Sort fields by order defined in config/DB
+            mappedFields.sort((a, b) => a.order - b.order);
+
+            setFields(mappedFields);
+
+            const statusesRes = await pb.collection('statuses').getFullList();
+            const mappedStatuses: Status[] = statusesRes.map((r: any) => ({
+                title: r.title,
+                slug: r.slug,
+                color: r.color
+            }));
+            setStatuses(mappedStatuses);
+
+        } catch (e) {
+            console.error("Failed to load config", e);
         }
-    }, [user?.id]);
+    };
 
     const fetchTasks = async (start = startDate, end = endDate, userIdOverride?: string, unfinishedMode = showUnfinishedOnly, groupedCompletedMode = showGroupedCompleted) => {
         if (!start || !end) return;
         
-        const targetUserId = userIdOverride || selectedUserId || user?.id;
+        const targetUserId = userIdOverride || selectedUserId || pb.authStore.record?.id;
         if (!targetUserId) return;
 
         setLoading(true);
@@ -108,14 +166,9 @@ export default function TaskList({ lang, user }: TaskListProps) {
         setTasks([]);
 
         try {
-            const startOfDay = new Date(start); 
-            startOfDay.setHours(0, 0, 0, 0); 
-
-            const endOfDay = new Date(end); 
-            endOfDay.setHours(23, 59, 59, 999); 
-
-            const filterStartDate = startOfDay.toISOString();
-            const filterEndDate = endOfDay.toISOString();
+            // Формат даты для бэкенда
+            const filterStartDate = `${start} 00:00:00`;
+            const filterEndDate = `${end} 23:59:59`;
 
             if (unfinishedMode) {
                 // Use Custom API for Actual Unfinished Tasks
@@ -194,6 +247,110 @@ export default function TaskList({ lang, user }: TaskListProps) {
         fetchTasks(startDate, endDate, newUserId);
     };
 
+    const handleFilterChange = (key: string, value: string) => {
+        setFilters(prev => ({ ...prev, [key]: value }));
+    };
+
+    const toggleStatusFilter = (key: string, slug: string) => {
+        setFilters(prev => {
+            const currentStr = prev[key] || '';
+            let current = currentStr ? currentStr.split(',') : [];
+            
+            if (current.includes(slug)) {
+                current = current.filter(s => s !== slug);
+            } else {
+                current.push(slug);
+            }
+            
+            const newVal = current.join(',');
+            // If empty, remove key to keep state clean
+            if (!newVal) {
+                const { [key]: _, ...rest } = prev;
+                return rest;
+            }
+            return { ...prev, [key]: newVal };
+        });
+    };
+
+    const clearFilters = () => {
+        setFilters({});
+        setOpenDropdowns({});
+    };
+
+    const toggleDropdown = (key: string) => {
+        setOpenDropdowns(prev => {
+            return { ...prev, [key]: !prev[key] };
+        });
+    };
+
+    // Filter tasks client-side based on per-field filters
+    const filteredTasks = useMemo(() => {
+        return tasks.filter(task => {
+            return fields.every(field => {
+                const filterVal = filters[field.key];
+                if (!filterVal) return true; // No filter set for this field
+
+                const taskVal = task[field.key];
+                // If filter is set but value is missing, exclude it
+                if (taskVal === null || taskVal === undefined) return false;
+
+                const strVal = String(taskVal).toLowerCase();
+
+                if (field.type === 'select' || field.key === 'status') {
+                    // Multi-select logic: check if task value matches Slug OR Title
+                    const selectedSlugs = filterVal.split(',');
+                    const currentVal = String(taskVal).trim().toLowerCase();
+                    
+                    // Build a list of all valid strings (slugs AND titles) for the selected filters
+                    const validValues = selectedSlugs.flatMap(slug => {
+                        const s = statuses.find(st => st.slug === slug);
+                        return s ? [slug.toLowerCase(), s.title.toLowerCase()] : [slug.toLowerCase()];
+                    });
+
+                    return validValues.includes(currentVal);
+                }
+
+                if (field.type === 'date') {
+                    if (!filterVal) return true;
+                    try {
+                        // Compare against the DISPLAYED date string
+                        const displayedDate = new Date(taskVal).toLocaleDateString(
+                            lang === 'ru' ? 'ru-RU' : (lang === 'az' ? 'az-Latn-AZ' : 'en-US')
+                        );
+                        return displayedDate.includes(filterVal);
+                    } catch (e) {
+                        return false;
+                    }
+                }
+                
+                // Partial match for everything else (text, number)
+                return strVal.includes(filterVal.toLowerCase());
+            });
+        });
+    }, [tasks, filters, fields, lang, statuses]); 
+
+    // Calculate totals for numeric fields
+    const totals = useMemo(() => {
+        const acc: Record<string, number> = {};
+        fields.forEach(f => {
+            if (f.type === 'number') {
+                acc[f.key] = 0;
+            }
+        });
+
+        filteredTasks.forEach(task => {
+            fields.forEach(f => {
+                if (f.type === 'number') {
+                    const val = parseFloat(task[f.key]);
+                    if (!isNaN(val)) {
+                        acc[f.key] += val;
+                    }
+                }
+            });
+        });
+        return acc;
+    }, [filteredTasks, fields]);
+
     const handleEditTime = async (task: Task, currentVal: number) => {
         const newValStr = window.prompt(lang === 'ru' ? "Введите новое значение времени (часы):" : "Enter new time value (hours):", String(currentVal));
         if (newValStr === null) return; 
@@ -221,9 +378,10 @@ export default function TaskList({ lang, user }: TaskListProps) {
                     new_time: newVal
                 }
             });
-            clearRankingCache(); // Clear ranking stats cache
+            // Clear cache so Analytics tab recalculates immediately
+            clearRankingCache();
             // Refresh with current params
-            fetchTasks(startDate, endDate, undefined, showUnfinishedOnly, showGroupedCompleted);
+            fetchTasks();
         } catch (e: any) {
             console.error(e);
             alert(translations[lang].genericError + ": " + e.message);
@@ -390,11 +548,11 @@ export default function TaskList({ lang, user }: TaskListProps) {
                         disabled={loading} 
                         style={{
                             marginBottom: 0, 
-                            height: '38px', // Increased height
+                            height: '38px', 
                             padding: '0 16px',
                             fontSize: '0.85rem', 
                             fontWeight: 600,
-                            display: 'flex', // Flexbox for alignment
+                            display: 'flex', 
                             alignItems: 'center',
                             justifyContent: 'center'
                         }}
@@ -409,10 +567,10 @@ export default function TaskList({ lang, user }: TaskListProps) {
                         onClick={toggleUnfinishedMode}
                         style={{
                             marginBottom: 0, 
-                            height: '38px', // Same height
+                            height: '38px', 
                             display: 'flex',
                             alignItems: 'center',
-                            justifyContent: 'center', // Center content
+                            justifyContent: 'center', 
                             gap: '0.5rem',
                             transition: 'all 0.2s',
                             background: showUnfinishedOnly ? 'var(--primary)' : 'white',
@@ -440,10 +598,10 @@ export default function TaskList({ lang, user }: TaskListProps) {
                         onClick={toggleGroupedCompletedMode}
                         style={{
                             marginBottom: 0, 
-                            height: '38px', // Same height
+                            height: '38px', 
                             display: 'flex',
                             alignItems: 'center',
-                            justifyContent: 'center', // Center content
+                            justifyContent: 'center', 
                             gap: '0.5rem',
                             transition: 'all 0.2s',
                             background: showGroupedCompleted ? 'var(--primary)' : 'white',
@@ -468,13 +626,12 @@ export default function TaskList({ lang, user }: TaskListProps) {
                 {/* 2. Client-Side Filters Card (Fields) */}
                 <div className="filter-card-fields">
                     {fields
-                        .filter(field => field.filterable) // Only render filters for filterable fields
+                        .filter(field => field.filterable) 
                         .map(field => (
                             <div key={field.key} className="form-group-inline" style={{flexGrow: 1, minWidth: field.key === 'status' || field.type === 'select' ? '200px' : '150px', maxWidth: '200px'}}>
                             <label className="form-label" style={{fontSize: '0.8rem', marginBottom: '0.25rem'}}>{field.title}</label>
                             {field.type === 'select' || field.key === 'status' ? (
                                 <div style={{position: 'relative'}}>
-                                    {/* Pseudo-Select Box */}
                                 <div 
                                     className="input"
                                     onClick={() => toggleDropdown(field.key)}
@@ -496,13 +653,12 @@ export default function TaskList({ lang, user }: TaskListProps) {
                                                 if (selectedTitles.length > 2) return `${selectedTitles.length} selected`;
                                                 return selectedTitles.join(', ');
                                             })()
-                                            : ((t as any).all || 'All')
+                                            : (t.all || 'All')
                                         }
                                     </span>
                                     <span style={{fontSize: '0.7rem', color: '#94a3b8'}}>▼</span>
                                 </div>
 
-                                {/* Dropdown Menu */}
                                 {openDropdowns[field.key] && (
                                     <div style={{
                                         position: 'absolute', 
@@ -556,7 +712,7 @@ export default function TaskList({ lang, user }: TaskListProps) {
                                 type={field.type === 'number' ? 'number' : 'text'}
                                 value={filters[field.key] || ''}
                                 onChange={(e) => handleFilterChange(field.key, e.target.value)}
-                                placeholder={field.type === 'date' ? (lang === 'en' ? 'MM/DD/YYYY' : 'DD.MM.YYYY') : '...'}
+                                placeholder="..."
                             />
                         )}
                     </div>
@@ -580,71 +736,50 @@ export default function TaskList({ lang, user }: TaskListProps) {
             {filteredTasks.length === 0 && !loading && !error ? (
                 <div className="empty-state">{t.noTasks}</div>
             ) : (
-                <>
-                   <div className="table-wrapper">
-                        <table className="data-table">
-                            <thead>
-                                <tr>
-                                    <th style={{width: '40px', textAlign: 'center'}}>#</th>
-                                    {fields.map(field => {
-                                        let style: React.CSSProperties = {width: field.width}; // Use width from config
-                                        if (field.type === 'number') {
-                                            style.textAlign = 'right'; // Align header to match data
-                                        }
-                                        
-                                        return (
-                                            <th key={field.key} style={style}>
-                                                {field.title}
-                                            </th>
-                                        );
-                                    })}
+                <div className="table-wrapper">
+                    <table className="data-table">
+                        <thead>
+                            <tr>
+                                <th style={{width: '40px', textAlign: 'center'}}>#</th>
+                                {fields.map(field => (
+                                    <th key={field.key} style={{width: field.width, textAlign: field.type === 'number' ? 'right' : 'left'}}>
+                                        {field.title}
+                                    </th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {filteredTasks.map((task, index) => (
+                                <tr key={index}>
+                                    <td style={{textAlign: 'center', color: '#94a3b8', fontSize: '0.8rem'}}>{index + 1}</td>
+                                    {fields.map(field => (
+                                        <td key={field.key} style={{width: field.width}}>
+                                            {renderCell(task, field)}
+                                        </td>
+                                    ))}
                                 </tr>
-                            </thead>
-                            <tbody>
-                                {filteredTasks.map((task, index) => (
-                                    <tr key={index}>
-                                        <td style={{textAlign: 'center', color: '#94a3b8', fontSize: '0.8rem'}}>{index + 1}</td>
-                                        {fields.map(field => {
-                                            let style: React.CSSProperties = {width: field.width}; // Use width from config
-                                            if (field.type === 'number') style.textAlign = 'right';
-                                            
-                                            // Allow description to wrap
-                                            if (field.key === 'description') {
-                                                style = {...style, whiteSpace: 'normal'};
-                                            }
-
+                            ))}
+                        </tbody>
+                        {filteredTasks.length > 0 && (
+                            <tfoot>
+                                <tr className="total-row">
+                                    <td></td>
+                                    {fields.map((field, idx) => {
+                                        if (idx === 0) return <td key={field.key} className="text-right font-bold">{t.total}</td>;
+                                        if (field.type === 'number') {
                                             return (
-                                                <td key={field.key} style={style}>
-                                                    {renderCell(task, field)}
+                                                <td key={field.key} className="text-right font-bold" style={{textAlign: 'right'}}>
+                                                    {totals[field.key]?.toFixed(2)}
                                                 </td>
                                             );
-                                        })}
-                                    </tr>
-                                ))}
-                            </tbody>
-                            {filteredTasks.length > 0 && (
-                                <tfoot>
-                                    <tr className="total-row">
-                                        <td></td> {/* Spacer for # column */}
-                                        {fields.map((field, idx) => {
-                                            let style: React.CSSProperties = {width: field.width}; // Use width from config
-                                            
-                                            if (idx === 0) return <td key={field.key} className="text-right font-bold" style={style}>{t.total}</td>;
-                                            if (field.type === 'number') {
-                                                return (
-                                                    <td key={field.key} className="text-right font-bold" style={{...style, textAlign: 'right'}}>
-                                                        {totals[field.key]?.toFixed(2)}
-                                                    </td>
-                                                );
-                                            }
-                                            return <td key={field.key} style={style}></td>;
-                                        })}
-                                    </tr>
-                                </tfoot>
-                            )}
-                        </table>
-                   </div>
-                </>
+                                        }
+                                        return <td key={field.key}></td>;
+                                    })}
+                                </tr>
+                            </tfoot>
+                        )}
+                    </table>
+                </div>
             )}
         </div>
     );

@@ -364,7 +364,7 @@ body {
   display: flex;
   align-items: flex-end;
   gap: 1.5rem;
-  width: fit-content; 
+  width: 100%; 
 }
 
 .filter-card-fields {
@@ -377,6 +377,7 @@ body {
   align-items: flex-end;
   gap: 1rem;
   flex-wrap: wrap;
+  width: 100%;
 }
 
 /* --- Table & Filters --- */
@@ -683,3 +684,35 @@ body {
   max-width: 150px !important; 
   display: inline-block !important; 
 }
+/* --- Modal --- */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  animation: fadeIn 0.2s;
+}
+.modal-content {
+  background: white;
+  padding: 1.5rem;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-xl);
+  width: 100%;
+  max-width: 500px;
+  position: relative;
+  animation: slideUp 0.2s;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
