@@ -1,4 +1,5 @@
 {
+  "bitrix_webhook": "https://siesco.bitrix24.ru/rest/7/2wo3cf5vb1lmd240",
   "statuses": [
     {
       "title": "Завершена",

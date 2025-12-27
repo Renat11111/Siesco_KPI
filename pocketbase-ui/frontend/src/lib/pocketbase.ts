@@ -70,6 +70,16 @@ export const getActualTasks = async (start: string, end: string, userId?: string
     });
 };
 
+export const getSetting = async (key: string): Promise<string> => {
+    try {
+        const record = await pb.collection('settings').getFirstListItem(`key = "${key}"`);
+        return record.value;
+    } catch (e) {
+        console.error(`Error fetching setting ${key}:`, e);
+        return '';
+    }
+};
+
 export const getUserFiles = async (userId: string, dateStr: string): Promise<{id: string, file_name: string}[]> => {
     const start = new Date(dateStr);
     start.setHours(0,0,0,0);

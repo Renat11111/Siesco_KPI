@@ -28,3 +28,6 @@ pocketbase-ui/frontend/.vite/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Documentation & Plans
+BITRIX_PLAN.md

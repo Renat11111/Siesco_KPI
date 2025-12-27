@@ -18,8 +18,9 @@ type TaskFieldConfig struct {
 }
 
 type AppConfig struct {
-	Statuses   []StatusConfig    `json:"statuses"`
-	TaskFields []TaskFieldConfig `json:"task_fields"`
+	BitrixWebhook string            `json:"bitrix_webhook"`
+	Statuses      []StatusConfig    `json:"statuses"`
+	TaskFields    []TaskFieldConfig `json:"task_fields"`
 }
 
 // AppContext содержит зависимости приложения

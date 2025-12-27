@@ -25,6 +25,7 @@ export interface TranslationKeys {
 
     // Tabs
     tabUpload: string;
+    tabBitrix: string;
     tabAnalytics: string;
     tabView: string;
     tabTimeOff: string;
@@ -149,6 +150,7 @@ export const translations: Record<Language, TranslationKeys> = {
         
         // Tabs
         tabUpload: "Загрузить отчет",
+        tabBitrix: "Задачи Bitrix",
         tabAnalytics: "Детальная аналитика",
         tabView: "Просмотреть задачи",
         tabTimeOff: "Отгулы",
@@ -280,6 +282,7 @@ export const translations: Record<Language, TranslationKeys> = {
 
         // Tabs
         tabUpload: "Hesabat yüklə",
+        tabBitrix: "Bitrix Tapşırıqları",
         tabAnalytics: "Ətraflı analitika",
         tabView: "Tapşırıqlara bax",
         tabTimeOff: "İcazə",
@@ -411,6 +414,7 @@ export const translations: Record<Language, TranslationKeys> = {
 
         // Tabs
         tabUpload: "Upload Report",
+        tabBitrix: "Bitrix Tasks",
         tabAnalytics: "Detailed Analytics",
         tabView: "View Tasks",
         tabTimeOff: "Time Off",

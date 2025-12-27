@@ -5,12 +5,13 @@ import TaskUpload from './TaskUpload';
 import TaskList from './TaskList';
 import AnalyticsView from './AnalyticsView';
 import LeaveRequests from './LeaveRequests';
+import BitrixTasks from './BitrixTasks';
 import ChangePasswordModal from './ChangePasswordModal';
 import { translations, Language } from '../lib/translations';
-import { IconUpload, IconList, IconLogout, IconUser, IconChart, IconCalendar, IconLock } from './Icons';
+import { IconUpload, IconList, IconLogout, IconUser, IconChart, IconCalendar, IconLock, IconBitrix } from './Icons';
 import logo from '../assets/images/logo.jpg';
 
-type ViewMode = 'upload' | 'list' | 'analytics' | 'timeoff';
+type ViewMode = 'upload' | 'list' | 'analytics' | 'timeoff' | 'bitrix';
 
 interface AuthProps {
     lang: Language;
@@ -91,6 +92,7 @@ export default function Auth({ lang, setLang }: AuthProps) {
                     </div>
                     
                     <nav className="nav-menu">
+                        <button className={`nav-item ${viewMode === 'bitrix' ? 'active' : ''}`} onClick={() => setViewMode('bitrix')}><IconBitrix />{t.tabBitrix}</button>
                         <button className={`nav-item ${viewMode === 'upload' ? 'active' : ''}`} onClick={() => setViewMode('upload')}><IconUpload />{t.tabUpload}</button>
                         <button className={`nav-item ${viewMode === 'analytics' ? 'active' : ''}`} onClick={() => setViewMode('analytics')}><IconChart />{t.tabAnalytics}</button>
                         <button className={`nav-item ${viewMode === 'list' ? 'active' : ''}`} onClick={() => setViewMode('list')}><IconList />{t.tabView}</button>
@@ -106,7 +108,7 @@ export default function Auth({ lang, setLang }: AuthProps) {
                 <main className="main-content">
                     <header className="top-header">
                         <div className="header-title">
-                            {viewMode === 'upload' ? t.uploadTitle : viewMode === 'analytics' ? t.tabAnalytics : viewMode === 'list' ? t.myTasks : t.tabTimeOff}
+                            {viewMode === 'bitrix' ? t.tabBitrix : viewMode === 'upload' ? t.uploadTitle : viewMode === 'analytics' ? t.tabAnalytics : viewMode === 'list' ? t.myTasks : t.tabTimeOff}
                         </div>
                         <div className="header-actions">
                             <div className="user-profile"><IconUser />{user.email || user.name || "User"}</div>
@@ -118,7 +120,7 @@ export default function Auth({ lang, setLang }: AuthProps) {
 
                     <div className="page-content">
                         <div className={`container-wrapper ${viewMode === 'upload' ? 'container-upload' : 'container-wide'} `}>
-                            {viewMode === 'upload' ? <TaskUpload lang={lang} /> : viewMode === 'analytics' ? <AnalyticsView lang={lang} /> : viewMode === 'list' ? <TaskList lang={lang} /> : <LeaveRequests lang={lang} />}
+                            {viewMode === 'bitrix' ? <BitrixTasks lang={lang} /> : viewMode === 'upload' ? <TaskUpload lang={lang} /> : viewMode === 'analytics' ? <AnalyticsView lang={lang} /> : viewMode === 'list' ? <TaskList lang={lang} /> : <LeaveRequests lang={lang} />}
                         </div>
                     </div>
                     {showPasswordModal && <ChangePasswordModal lang={lang} onClose={() => setShowPasswordModal(false)} />}

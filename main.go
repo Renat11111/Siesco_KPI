@@ -308,6 +308,19 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 		}
 	}
 
+	// --- 2.3 Создание коллекции 'settings' ---
+	settingsCollection, err := app.FindCollectionByNameOrId("settings")
+	if err != nil {
+		log.Println("Creating 'settings' collection...")
+		settingsCollection = core.NewBaseCollection("settings")
+		settingsCollection.ListRule = types.Pointer("@request.auth.id != ''")
+		settingsCollection.Fields.Add(&core.TextField{Name: "key", Required: true})
+		settingsCollection.Fields.Add(&core.TextField{Name: "value", Required: true})
+		if err := app.Save(settingsCollection); err != nil { return fmt.Errorf("failed to create settings: %w", err) }
+		settingsCollection.AddIndex("idx_settings_key", true, "key", "")
+		app.Save(settingsCollection)
+	}
+
 	// --- 3. Чтение config.json ---
 	log.Println("Syncing config.json...")
 	configFile, err := os.Open("config.json")
@@ -324,6 +337,20 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 	var appConfig AppConfig
 	if err := json.Unmarshal(bytes, &appConfig); err != nil {
 		log.Fatalf("CRITICAL: Failed to parse config.json: %v", err)
+	}
+
+	// Sync bitrix_webhook to settings
+	if appConfig.BitrixWebhook != "" {
+		settings, _ := app.FindCollectionByNameOrId("settings")
+		if settings != nil {
+			record, _ := app.FindFirstRecordByFilter("settings", "key = 'bitrix_webhook'")
+			if record == nil {
+				record = core.NewRecord(settings)
+				record.Set("key", "bitrix_webhook")
+			}
+			record.Set("value", appConfig.BitrixWebhook)
+			app.Save(record)
+		}
 	}
 
 	if len(appConfig.Statuses) == 0 {
