@@ -50,6 +50,38 @@ func main() {
 			return handleUpdateTaskTime(app, appContext, e)
 		})
 
+		// --- HOOK: Notify User on Leave Request Status Change ---
+		app.OnRecordUpdateRequest("leave_requests").BindFunc(func(e *core.RecordRequestEvent) error {
+			// Сначала выполняем сохранение
+			if err := e.Next(); err != nil { return err }
+
+			oldStatus := e.Record.Original().GetString("status")
+			newStatus := e.Record.GetString("status")
+			userId := e.Record.GetString("user")
+
+			// Если статус изменился на финальный
+			if oldStatus != newStatus && (newStatus == "approved" || newStatus == "rejected") {
+				go func(uid, status string) {
+					notifs, _ := app.FindCollectionByNameOrId("notifications")
+					if notifs != nil {
+						rec := core.NewRecord(notifs)
+						rec.Set("user", uid)
+						msg := fmt.Sprintf("Статус вашего запроса на отгул обновлен: %s", status)
+						if status == "approved" { msg = "Ваш запрос на отгул ОДОБРЕН ✅" }
+						if status == "rejected" { msg = "Ваш запрос на отгул ОТКЛОНЕН ❌" }
+						
+						rec.Set("message", msg)
+						rec.Set("type", "info")
+						if status == "approved" { rec.Set("type", "success") }
+						if status == "rejected" { rec.Set("type", "error") }
+						
+						app.Save(rec)
+					}
+				}(userId, newStatus)
+			}
+			return nil
+		})
+
 		// --- HOOK: Leave Request Security & Notification ---
 		app.OnRecordCreateRequest("leave_requests").BindFunc(func(e *core.RecordRequestEvent) error {
 			if e.Auth != nil {
@@ -106,16 +138,29 @@ func main() {
 				senderName := app.Settings().Meta.SenderName
 				
 				mailClient := app.NewMailClient()
+				notifsCollection, _ := app.FindCollectionByNameOrId("notifications")
+
 				for _, admin := range admins {
+					// Email
 					email := admin.GetString("email")
-					if email == "" { continue }
-					message := &mailer.Message{
-						From:    mail.Address{Address: senderAddress, Name: senderName},
-						To:      []mail.Address{{Address: email}},
-						Subject: subject,
-						HTML:    body,
+					if email != "" {
+						message := &mailer.Message{
+							From:    mail.Address{Address: senderAddress, Name: senderName},
+							To:      []mail.Address{{Address: email}},
+							Subject: subject,
+							HTML:    body,
+						}
+						mailClient.Send(message)
 					}
-					mailClient.Send(message)
+
+					// Notification (Bell)
+					if notifsCollection != nil {
+						rec := core.NewRecord(notifsCollection)
+						rec.Set("user", admin.Id)
+						rec.Set("message", fmt.Sprintf("📅 Новый запрос на отгул: %s", userName))
+						rec.Set("type", "warning")
+						app.Save(rec)
+					}
 				}
 			}(reasonCopy, userIdCopy)
 
@@ -319,6 +364,26 @@ func bootstrapCollections(app *pocketbase.PocketBase, context *AppContext) error
 		if err := app.Save(settingsCollection); err != nil { return fmt.Errorf("failed to create settings: %w", err) }
 		settingsCollection.AddIndex("idx_settings_key", true, "key", "")
 		app.Save(settingsCollection)
+	}
+
+	// --- 2.4 Создание коллекции 'notifications' ---
+	notifications, err := app.FindCollectionByNameOrId("notifications")
+	if err != nil {
+		log.Println("Creating 'notifications' collection...")
+		notifications = core.NewBaseCollection("notifications")
+		notifications.ListRule = types.Pointer("@request.auth.id = user")
+		notifications.ViewRule = types.Pointer("@request.auth.id = user")
+		notifications.CreateRule = nil // Только система создает уведомления
+		notifications.UpdateRule = types.Pointer("@request.auth.id = user") // Чтобы пользователь мог отметить как прочитанное
+		notifications.DeleteRule = types.Pointer("@request.auth.id = user")
+		
+		notifications.Fields.Add(&core.RelationField{Name: "user", CollectionId: users.Id, MaxSelect: 1, Required: true})
+		notifications.Fields.Add(&core.TextField{Name: "message", Required: true})
+		notifications.Fields.Add(&core.BoolField{Name: "is_read"})
+		notifications.Fields.Add(&core.TextField{Name: "type"}) // info, success, warning, error
+		notifications.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
+		
+		if err := app.Save(notifications); err != nil { return fmt.Errorf("failed to create notifications: %w", err) }
 	}
 
 	// --- 3. Чтение config.json ---

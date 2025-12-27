@@ -6,6 +6,7 @@ import TaskList from './TaskList';
 import AnalyticsView from './AnalyticsView';
 import LeaveRequests from './LeaveRequests';
 import BitrixTasks from './BitrixTasks';
+import NotificationCenter from './NotificationCenter';
 import ChangePasswordModal from './ChangePasswordModal';
 import { translations, Language } from '../lib/translations';
 import { IconUpload, IconList, IconLogout, IconUser, IconChart, IconCalendar, IconLock, IconBitrix } from './Icons';
@@ -111,6 +112,7 @@ export default function Auth({ lang, setLang }: AuthProps) {
                             {viewMode === 'bitrix' ? t.tabBitrix : viewMode === 'upload' ? t.uploadTitle : viewMode === 'analytics' ? t.tabAnalytics : viewMode === 'list' ? t.myTasks : t.tabTimeOff}
                         </div>
                         <div className="header-actions">
+                            <NotificationCenter />
                             <div className="user-profile"><IconUser />{user.email || user.name || "User"}</div>
                             <select className="lang-select" value={lang} onChange={(e) => setLang(e.target.value as Language)}>
                                 <option value="ru">RU</option><option value="az">AZ</option><option value="en">EN</option>
