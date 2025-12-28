@@ -111,8 +111,6 @@ func bootstrapCollections(pbApp core.App, context *app.AppContext) error {
 		return err
 	}
 
-	log.Printf("[INFO] Syncing %d statuses and %d task fields from config", len(appConfig.Statuses), len(appConfig.TaskFields))
-
 	for _, s := range appConfig.Statuses {
 		context.StatusMap[strings.ToLower(strings.TrimSpace(s.Slug))] = s.Type
 		context.StatusMap[strings.ToLower(strings.TrimSpace(s.Title))] = s.Type

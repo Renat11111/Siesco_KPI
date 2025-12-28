@@ -106,8 +106,6 @@ func RegisterLeaveRequestHooks(app *pocketbase.PocketBase) {
 				rec.Set("is_read", false)
 				if err := e.App.Save(rec); err != nil {
 					fmt.Printf("[ERROR] Failed to save notification for admin %s: %v\n", admin.Id, err)
-				} else {
-					fmt.Printf("[INFO] Notification created for admin %s\n", admin.Id)
 				}
 			}
 

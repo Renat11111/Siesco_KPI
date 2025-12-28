@@ -140,6 +140,39 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
         setError('');
 
         try {
+            // 1. Validate Date Range
+            const start = new Date(startDate);
+            const end = new Date(endDate);
+            const now = new Date();
+            now.setHours(0, 0, 0, 0);
+            const startCheck = new Date(startDate);
+            startCheck.setHours(0, 0, 0, 0);
+
+            if (startCheck < now) {
+                throw new Error(t.errorPastDate);
+            }
+            if (end < start) {
+                throw new Error(t.errorEndDate);
+            }
+
+            // 2. Check Overlap (Client-side against loaded requests)
+            // Note: This only checks against currently loaded requests. 
+            // Ideally, backend should also enforce this.
+            const hasOverlap = requests.some(req => {
+                if (req.status === 'rejected') return false;
+                if (req.user !== currentUser?.id) return false; // Check only own requests
+                
+                const reqStart = new Date(req.start_date);
+                const reqEnd = new Date(req.end_date);
+                
+                // Overlap condition: (StartA <= EndB) and (EndA >= StartB)
+                return (start <= reqEnd && end >= reqStart);
+            });
+
+            if (hasOverlap) {
+                throw new Error(t.errorOverlap);
+            }
+
             await pb.collection('leave_requests').create({
                 start_date: startDate,
                 end_date: endDate,
@@ -151,7 +184,12 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
             setStartDate(''); setEndDate(''); setReason('');
             fetchRequests(); // Мгновенное обновление
         } catch (err: any) {
-            setError(handleApiError(err, t));
+            // Handle simple Error objects (validation) and PocketBase errors
+            if (err instanceof Error && !('response' in err)) {
+                setError(err.message);
+            } else {
+                setError(handleApiError(err, t));
+            }
         } finally {
             setIsFormSubmitting(false);
         }
@@ -174,6 +212,15 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
             fetchRequests();
         } catch (err: any) {
             alert(handleApiError(err, t));
+        }
+    };
+
+    const getStatusLabel = (status: string) => {
+        switch (status) {
+            case 'pending': return t.statusPending;
+            case 'approved': return t.statusApproved;
+            case 'rejected': return t.statusRejected;
+            default: return status;
         }
     };
 
@@ -221,7 +268,7 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
 
                     <div className="table-wrapper" style={{ border: 'none', flex: 1, overflowY: 'auto' }}>
                         <table className="data-table">
-                            <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
+                            <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'white' }}>
                                 <tr>
                                     {isAdmin && <th style={{ width: '150px' }}>User</th>}
                                     <th style={{ width: '120px' }}>{t.startDate}</th>
@@ -246,7 +293,9 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
                                                     <option value="rejected">{t.statusRejected}</option>
                                                 </select>
                                             ) : (
-                                                <span className="badge">{req.status}</span>
+                                                <span className={`badge ${req.status === 'approved' ? 'badge-success' : req.status === 'rejected' ? 'badge-error' : 'badge-neutral'}`}>
+                                                    {getStatusLabel(req.status)}
+                                                </span>
                                             )}
                                         </td>
                                         <td>

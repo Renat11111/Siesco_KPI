@@ -681,11 +681,11 @@ export default function TaskList({ lang }: TaskListProps) {
                                         left: 0, 
                                         width: '100%', 
                                         minWidth: '200px',
-                                        background: 'white', 
-                                        border: '1px solid #e2e8f0', 
+                                        backgroundColor: '#ffffff', 
+                                        border: '1px solid #cbd5e1', 
                                         borderRadius: '8px', 
-                                        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', 
-                                        zIndex: 50, 
+                                        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)', 
+                                        zIndex: 105, 
                                         padding: '0.5rem', 
                                         maxHeight: '300px', 
                                         overflowY: 'auto'
@@ -776,7 +776,7 @@ export default function TaskList({ lang }: TaskListProps) {
                             ))}
                         </tbody>
                         {filteredTasks.length > 0 && (
-                            <tfoot>
+                            <tfoot style={{ position: 'sticky', bottom: 0, zIndex: 10, background: 'white' }}>
                                 <tr className="total-row">
                                     <td></td>
                                     {fields.map((field, idx) => {
