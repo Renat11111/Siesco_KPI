@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"my_pocketbase_app/internal/app"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+	"my_pocketbase_app/internal/app"
 )
 
 var taskSlicePool = sync.Pool{
@@ -78,9 +78,9 @@ func StreamRanking(pbApp *pocketbase.PocketBase, start, end string, statusMap ma
 	defer rows.Close()
 
 	type UserStats struct {
-		UserId         string
-		TotalHours     float64
-		TaskStatuses   map[string]string
+		UserId       string
+		TotalHours   float64
+		TaskStatuses map[string]string
 	}
 	statsMap := make(map[string]*UserStats)
 
@@ -92,7 +92,9 @@ func StreamRanking(pbApp *pocketbase.PocketBase, start, end string, statusMap ma
 		if err := rows.Scan(&userId, &dataJson); err != nil {
 			continue
 		}
-		if userId == "" { continue }
+		if userId == "" {
+			continue
+		}
 
 		if _, exists := statsMap[userId]; !exists {
 			statsMap[userId] = &UserStats{
@@ -117,7 +119,7 @@ func StreamRanking(pbApp *pocketbase.PocketBase, start, end string, statusMap ma
 
 		for _, t := range *taskListPtr {
 			entry.TotalHours += GetTimeSpent(t["time_spent"])
-			
+
 			tNum := fmt.Sprintf("%v", t["task_number"])
 			if tNum != "" {
 				entry.TaskStatuses[tNum] = fmt.Sprintf("%v", t["status"])
@@ -156,7 +158,9 @@ func StreamRanking(pbApp *pocketbase.PocketBase, start, end string, statusMap ma
 			}
 		}
 		name := userMap[userId]
-		if name == "" { name = "Unknown" }
+		if name == "" {
+			name = "Unknown"
+		}
 
 		response = append(response, ResponseItem{
 			UserId:         userId,

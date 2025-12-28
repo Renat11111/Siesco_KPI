@@ -32,12 +32,12 @@ func Register(app core.App) error {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		go func() {
 			time.Sleep(10 * time.Second) // Даем серверу время прогреться
-			
+
 			sync := NewSyncManager(app)
 			count := 0
 			// Используем сырой SQL запрос для скорости проверки наличия записей
 			app.DB().Select("count(*)").From("bitrix_tasks").Row(&count)
-			
+
 			if count == 0 {
 				log.Println("[Bitrix] bitrix_tasks table is empty. Starting initial sync...")
 				sync.SyncAll()

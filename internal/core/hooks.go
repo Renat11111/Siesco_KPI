@@ -13,16 +13,20 @@ import (
 // triggerSignal отправляет глобальный сигнал обновления
 func triggerSignal(app *pocketbase.PocketBase) {
 	col, _ := app.FindCollectionByNameOrId("ranking_updates")
-	if col == nil { return }
+	if col == nil {
+		return
+	}
 	rec, _ := app.FindFirstRecordByFilter("ranking_updates", "id != ''", nil)
-	if rec == nil { rec = pbCore.NewRecord(col) }
-	rec.Set("updated", time.Now().UTC()) 
+	if rec == nil {
+		rec = pbCore.NewRecord(col)
+	}
+	rec.Set("updated", time.Now().UTC())
 	app.Save(rec)
 }
 
 // RegisterLeaveRequestHooks настраивает логику для заявок на отгул
 func RegisterLeaveRequestHooks(app *pocketbase.PocketBase) {
-	
+
 	// 1. UPDATE Hook
 	app.OnRecordAfterUpdateSuccess("leave_requests").BindFunc(func(e *pbCore.RecordEvent) error {
 		oldStatus := e.Record.Original().GetString("status")
@@ -35,12 +39,20 @@ func RegisterLeaveRequestHooks(app *pocketbase.PocketBase) {
 				rec := pbCore.NewRecord(notifs)
 				rec.Set("user", userId)
 				msg := "Ваш запрос на отгул обновлен"
-				if newStatus == "approved" { msg = "Ваш запрос на отгул ОДОБРЕН ✅" }
-				if newStatus == "rejected" { msg = "Ваш запрос на отгул ОТКЛОНЕН ❌" }
+				if newStatus == "approved" {
+					msg = "Ваш запрос на отгул ОДОБРЕН ✅"
+				}
+				if newStatus == "rejected" {
+					msg = "Ваш запрос на отгул ОТКЛОНЕН ❌"
+				}
 				rec.Set("message", msg)
 				rec.Set("type", "info")
-				if newStatus == "approved" { rec.Set("type", "success") }
-				if newStatus == "rejected" { rec.Set("type", "error") }
+				if newStatus == "approved" {
+					rec.Set("type", "success")
+				}
+				if newStatus == "rejected" {
+					rec.Set("type", "error")
+				}
 				rec.Set("is_read", false)
 				e.App.Save(rec) // СИНХРОННО
 				triggerSignal(app)
@@ -58,18 +70,26 @@ func RegisterLeaveRequestHooks(app *pocketbase.PocketBase) {
 		newStart := e.Record.GetString("start_date")
 		newEnd := e.Record.GetString("end_date")
 		userId := e.Record.GetString("user")
-		existing, _ := e.App.FindRecordsByFilter("leave_requests", "user = {:user} && status != 'rejected' && start_date <= {:newEnd} && end_date >= {:newStart}", "", 1, 0, map[string]interface{}{ "user": userId, "newStart": newStart, "newEnd": newEnd })
-		if len(existing) > 0 { return e.BadRequestError("You already have an active leave request for this period", nil) }
+		existing, _ := e.App.FindRecordsByFilter("leave_requests", "user = {:user} && status != 'rejected' && start_date <= {:newEnd} && end_date >= {:newStart}", "", 1, 0, map[string]interface{}{"user": userId, "newStart": newStart, "newEnd": newEnd})
+		if len(existing) > 0 {
+			return e.BadRequestError("You already have an active leave request for this period", nil)
+		}
 
-		if err := e.Next(); err != nil { return err }
+		if err := e.Next(); err != nil {
+			return err
+		}
 
 		// ЛОГИКА УВЕДОМЛЕНИЙ (СИНХРОННО как в твоем анализе)
 		userRec, _ := app.FindRecordById("users", userId)
 		userName := "Unknown"
-		if userRec != nil { userName = userRec.GetString("name") }
+		if userRec != nil {
+			userName = userRec.GetString("name")
+		}
 
 		admins, err := app.FindRecordsByFilter("users", "superadmin=true || is_coordinator=true", "", 100, 0, nil)
-		if err != nil || len(admins) == 0 { return nil }
+		if err != nil || len(admins) == 0 {
+			return nil
+		}
 
 		notifsCol, _ := app.FindCollectionByNameOrId("notifications")
 		senderAddress := app.Settings().Meta.SenderAddress
@@ -83,7 +103,7 @@ func RegisterLeaveRequestHooks(app *pocketbase.PocketBase) {
 				rec.Set("message", "📅 Новый запрос на отгул: "+userName)
 				rec.Set("type", "warning")
 				rec.Set("is_read", false)
-				e.App.Save(rec) 
+				e.App.Save(rec)
 			}
 
 			// Б. Email (в фоне)

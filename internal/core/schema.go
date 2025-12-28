@@ -22,12 +22,18 @@ func EnsureSettingsCollection(app core.App) error {
 
 func EnsureCoreCollections(app core.App) error {
 	users, err := app.FindCollectionByNameOrId("users")
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	users.ListRule = types.Pointer(RuleAuthOnly)
 	users.ViewRule = types.Pointer(RuleAuthOnly)
-	if users.Fields.GetByName("superadmin") == nil { users.Fields.Add(&core.BoolField{ Name: "superadmin" }) }
-	if users.Fields.GetByName("is_coordinator") == nil { users.Fields.Add(&core.BoolField{ Name: "is_coordinator" }) }
+	if users.Fields.GetByName("superadmin") == nil {
+		users.Fields.Add(&core.BoolField{Name: "superadmin"})
+	}
+	if users.Fields.GetByName("is_coordinator") == nil {
+		users.Fields.Add(&core.BoolField{Name: "is_coordinator"})
+	}
 	app.Save(users)
 
 	leaveReqs, err := app.FindCollectionByNameOrId("leave_requests")
@@ -55,7 +61,7 @@ func EnsureCoreCollections(app core.App) error {
 		tasksCol.Fields.Add(&core.RelationField{Name: "user", CollectionId: users.Id, MaxSelect: 1, Required: true})
 		tasksCol.Fields.Add(&core.RelationField{Name: "uploaded_by", CollectionId: users.Id, MaxSelect: 1})
 		tasksCol.Fields.Add(&core.JSONField{Name: "data", MaxSize: 2000000})
-		tasksCol.Fields.Add(&core.FileField{Name: "excel_file", MaxSelect: 1, MaxSize: 5242880, MimeTypes: []string{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/vnd.ms-excel"}})
+		tasksCol.Fields.Add(&core.FileField{Name: "excel_file", MaxSelect: 1, MaxSize: 5242880, MimeTypes: []string{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"}})
 		tasksCol.Fields.Add(&core.DateField{Name: "file_date"})
 		tasksCol.Fields.Add(&core.TextField{Name: "file_name"})
 		app.Save(tasksCol)
@@ -65,16 +71,26 @@ func EnsureCoreCollections(app core.App) error {
 	tasksCol.CreateRule = types.Pointer(RuleAuthOnly)
 	tasksCol.UpdateRule = types.Pointer(RuleTaskView)
 	tasksCol.DeleteRule = types.Pointer(RuleTaskDelete)
-	
-	idxList := []struct { Name string; Columns string }{
+
+	idxList := []struct {
+		Name    string
+		Columns string
+	}{
 		{"idx_tasks_file_date", "file_date"},
 		{"idx_tasks_user", "user"},
 		{"idx_tasks_user_file_date", "user,file_date"},
 	}
 	for _, idx := range idxList {
 		found := false
-		for _, existing := range tasksCol.Indexes { if strings.Contains(existing, idx.Name) { found = true; break } }
-		if !found { tasksCol.AddIndex(idx.Name, false, idx.Columns, "") }
+		for _, existing := range tasksCol.Indexes {
+			if strings.Contains(existing, idx.Name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			tasksCol.AddIndex(idx.Name, false, idx.Columns, "")
+		}
 	}
 	app.Save(tasksCol)
 
@@ -83,10 +99,10 @@ func EnsureCoreCollections(app core.App) error {
 		if col == nil {
 			col = core.NewBaseCollection(name)
 			col.Fields.Add(&core.TextField{Name: "file_name", Required: true})
-			if name == "deletion_logs" { 
+			if name == "deletion_logs" {
 				col.Fields.Add(&core.TextField{Name: "reason", Required: true})
-				col.Fields.Add(&core.RelationField{ Name: "deleted_by", CollectionId: users.Id, MaxSelect: 1 })
-				col.Fields.Add(&core.FileField{ Name: "excel_file", MaxSelect: 1, MimeTypes: []string{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/vnd.ms-excel"}})
+				col.Fields.Add(&core.RelationField{Name: "deleted_by", CollectionId: users.Id, MaxSelect: 1})
+				col.Fields.Add(&core.FileField{Name: "excel_file", MaxSelect: 1, MimeTypes: []string{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"}})
 			} else {
 				col.Fields.Add(&core.RelationField{Name: "uploaded_by", CollectionId: users.Id, MaxSelect: 1})
 				col.Fields.Add(&core.RelationField{Name: "target_user", CollectionId: users.Id, MaxSelect: 1})
@@ -96,7 +112,7 @@ func EnsureCoreCollections(app core.App) error {
 		}
 		col.ListRule = types.Pointer(RuleAdminOnly)
 		col.ViewRule = types.Pointer(RuleAdminOnly)
-		col.CreateRule = types.Pointer(RuleAdminOnly) 
+		col.CreateRule = types.Pointer(RuleAdminOnly)
 		app.Save(col)
 	}
 
@@ -109,7 +125,7 @@ func EnsureCoreCollections(app core.App) error {
 		notifsCol.Fields.Add(&core.TextField{Name: "type"})
 		app.Save(notifsCol)
 	}
-	
+
 	// ЖЕСТКИЙ ФИКС ПРАВИЛ (БЕЗ .id)
 	notifsCol.ListRule = types.Pointer(RuleNotification)
 	notifsCol.ViewRule = types.Pointer(RuleNotification)

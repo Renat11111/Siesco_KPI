@@ -2,21 +2,23 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"strings"
 
+	"github.com/pocketbase/pocketbase"
+	"github.com/pocketbase/pocketbase/core"
 	"my_pocketbase_app/internal/app"
 	"my_pocketbase_app/internal/bitrix"
 	"my_pocketbase_app/internal/config"
 	appCore "my_pocketbase_app/internal/core"
 	"my_pocketbase_app/internal/handlers"
-	"github.com/pocketbase/pocketbase"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	pbApp := pocketbase.New()
 	appContext := &app.AppContext{
 		StatusMap: make(map[string]string),
@@ -24,11 +26,13 @@ func main() {
 
 	// Регистрируем Bitrix (он сам добавит хуки в OnServe)
 	if err := bitrix.Register(pbApp); err != nil {
-		log.Fatalf("Failed to register Bitrix: %v", err)
+		log.Fatalf("[FATAL] Failed to register Bitrix: %v", err)
 	}
 
 	// Основная инициализация в OnServe
 	pbApp.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		log.Println("[INFO] Server is starting, registering hooks and routes...")
+
 		// Регистрация хуков через e.App
 		appCore.RegisterLeaveRequestHooks(pbApp)
 		appCore.RegisterTaskSignaling(pbApp)
@@ -47,9 +51,10 @@ func main() {
 
 		// Инициализация структуры
 		if err := bootstrapCollections(e.App, appContext); err != nil {
-			log.Printf("Bootstrap collections error: %v", err)
+			log.Printf("[ERROR] Bootstrap collections failed: %v", err)
 		}
 
+		log.Println("[INFO] Server is ready to serve requests")
 		return e.Next()
 	})
 
@@ -62,6 +67,7 @@ func findConfigFile() (string, error) {
 	paths := []string{"config.json", "../config.json", "../../config.json"}
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
+			log.Printf("[INFO] Using config file: %s", p)
 			return p, nil
 		}
 	}
@@ -69,26 +75,43 @@ func findConfigFile() (string, error) {
 }
 
 func bootstrapCollections(pbApp core.App, context *app.AppContext) error {
-	log.Println("Initializing collections structure...")
+	log.Println("[INFO] Initializing collections structure...")
 
-	if err := appCore.EnsureCoreCollections(pbApp); err != nil { return err }
-	if err := appCore.EnsureStatusCollection(pbApp); err != nil { return err }
-	if err := appCore.EnsureTaskFieldsCollection(pbApp); err != nil { return err }
-	if err := appCore.EnsureSettingsCollection(pbApp); err != nil { return err }
-	if err := appCore.EnsureViews(pbApp); err != nil { return err }
+	if err := appCore.EnsureCoreCollections(pbApp); err != nil {
+		return fmt.Errorf("core: %w", err)
+	}
+	if err := appCore.EnsureStatusCollection(pbApp); err != nil {
+		return fmt.Errorf("statuses: %w", err)
+	}
+	if err := appCore.EnsureTaskFieldsCollection(pbApp); err != nil {
+		return fmt.Errorf("fields: %w", err)
+	}
+	if err := appCore.EnsureSettingsCollection(pbApp); err != nil {
+		return fmt.Errorf("settings: %w", err)
+	}
+	if err := appCore.EnsureViews(pbApp); err != nil {
+		return fmt.Errorf("views: %w", err)
+	}
 
 	configPath, err := findConfigFile()
 	if err != nil {
+		log.Println("[WARN] Config file not found, skipping sync")
 		return nil
 	}
 
 	configFile, err := os.Open(configPath)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer configFile.Close()
 
 	var appConfig config.AppConfig
 	bytes, _ := io.ReadAll(configFile)
-	if err := json.Unmarshal(bytes, &appConfig); err != nil { return err }
+	if err := json.Unmarshal(bytes, &appConfig); err != nil {
+		return err
+	}
+
+	log.Printf("[INFO] Syncing %d statuses and %d task fields from config", len(appConfig.Statuses), len(appConfig.TaskFields))
 
 	for _, s := range appConfig.Statuses {
 		context.StatusMap[strings.ToLower(strings.TrimSpace(s.Slug))] = s.Type
@@ -100,7 +123,7 @@ func bootstrapCollections(pbApp core.App, context *app.AppContext) error {
 		existingCount := 0
 		pbApp.DB().Select("count(*)").From("statuses").Row(&existingCount)
 		if existingCount == 0 {
-			log.Println("Populating 'statuses' collection...")
+			log.Println("[INFO] Populating 'statuses' collection...")
 			for _, s := range appConfig.Statuses {
 				record := core.NewRecord(statusesCol)
 				record.Set("title", s.Title)
@@ -116,7 +139,7 @@ func bootstrapCollections(pbApp core.App, context *app.AppContext) error {
 		existingCount := 0
 		pbApp.DB().Select("count(*)").From("task_fields").Row(&existingCount)
 		if existingCount == 0 {
-			log.Println("Populating 'task_fields' collection...")
+			log.Println("[INFO] Populating 'task_fields' collection...")
 			for i, f := range appConfig.TaskFields {
 				record := core.NewRecord(fieldsCol)
 				record.Set("key", f.Key)
@@ -140,7 +163,9 @@ func bootstrapCollections(pbApp core.App, context *app.AppContext) error {
 				record.Set("key", "bitrix_webhook")
 			}
 			record.Set("value", appConfig.BitrixWebhook)
-			pbApp.Save(record)
+			if err := pbApp.Save(record); err == nil {
+				log.Println("[INFO] Bitrix webhook synced successfully")
+			}
 		}
 	}
 

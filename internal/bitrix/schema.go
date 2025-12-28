@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 
-	core_rules "my_pocketbase_app/internal/core"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
+	core_rules "my_pocketbase_app/internal/core"
 )
 
 // EnsureCollections инициализирует все коллекции, относящиеся к Bitrix24
