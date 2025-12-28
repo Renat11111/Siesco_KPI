@@ -36,7 +36,6 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
     const [validStatuses, setValidStatuses] = useState<string[]>([]);
     const [taskFields, setTaskFields] = useState<TaskField[]>([]);
     
-    // Стабильный пользователь
     const [currentUser, setCurrentUser] = useState(pb.authStore.record);
     useEffect(() => {
         const unsubscribe = pb.authStore.onChange((_token, record) => {
@@ -62,6 +61,18 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
     const [deletionReason, setDeletionReason] = useState('');
 
     const inputRef = useRef<HTMLInputElement>(null);
+
+    // REALTIME
+    useEffect(() => {
+        let unsub: any;
+        const subscribe = async () => {
+            unsub = await pb.collection('ranking_updates').subscribe('*', () => {
+                setRefreshStats(prev => prev + 1);
+            });
+        };
+        subscribe();
+        return () => { if (unsub) unsub(); };
+    }, []);
 
     useEffect(() => {
         if (uploadMode === 'delete') {
@@ -139,135 +150,110 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
         return parts.length === 3 ? `${parts[2]}.${parts[1]}.${parts[0]}` : "";
     };
 
-    const parseDateStrict = (excelDate: any): string | null => {
-        if (!excelDate) return null;
-        try {
-            if (typeof excelDate === 'number') {
-                 const date = new Date(Math.round((excelDate - 25569)*86400*1000));
-                 return date.toISOString();
-            }
-            if (typeof excelDate === 'string') {
-                const parts = excelDate.trim().split('.');
-                if (parts.length === 3) {
-                    const d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-                    d.setHours(12); return d.toISOString();
-                }
-                const d = new Date(excelDate);
-                if (!isNaN(d.getTime())) return d.toISOString();
-            }
-        } catch (e) { return null; }
-        return null;
-    };
-
-    const processFile = (file: File) => {
+    const processFile = async (file: File) => {
         setUploading(true); setMessage(t.validating); setError(''); setDetailedErrors([]);
-        if (validStatuses.length === 0 || taskFields.length === 0) {
-            setError("Configuration error."); setUploading(false); return;
-        }
-
+        
+        const targetUserId = selectedUserId || currentUser?.id;
         const requiredPrefix = getFormattedDateForCheck(fileDate);
+
+        // 1. ПРОВЕРКА ИМЕНИ ФАЙЛА
         if (!file.name.startsWith(requiredPrefix)) {
             setError(`${t.errorPrefix} "${requiredPrefix}"`); setUploading(false); return;
         }
 
-        const targetUserId = selectedUserId || currentUser?.id;
-        if (isSuperAdmin && currentUser && targetUserId !== currentUser.id) {
-            const name = users.find(u => u.id === targetUserId)?.name || targetUserId;
-            // @ts-ignore
-            if (t.confirmUploadForOther && !window.confirm(t.confirmUploadForOther.replace("{name}", name))) {
-                setUploading(false); return;
+        try {
+            // 2. ПРОВЕРКА ЛИМИТОВ И ДУБЛИКАТОВ
+            const existingFiles = await pb.collection('tasks').getFullList({
+                filter: `user = "${targetUserId}" && file_date >= "${fileDate} 00:00:00" && file_date <= "${fileDate} 23:59:59"`,
+                requestKey: null
+            });
+
+            if (existingFiles.some(f => f.file_name === file.name)) {
+                setError(t.fileAlreadyExists); setUploading(false); return;
             }
-        }
 
-        setMessage(t.reading);
+            if (existingFiles.length >= 2 && !isSuperAdmin) {
+                setError(t.limitReached); setUploading(false); return;
+            }
 
-        const reader = new FileReader();
-        reader.onload = async (evt) => {
-            try {
-                const bstr = evt.target?.result;
-                const wb = XLSX.read(bstr, { type: 'binary' });
-                let ws = wb.Sheets["Лист1"] || wb.Sheets[wb.SheetNames[0]];
-                const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
-                
-                const headers = (data[0] as any[]).map(h => h?.toString().trim().toLowerCase());
-                const columnMapping: Record<string, number> = {};
-                taskFields.forEach(f => {
-                    const idx = headers.findIndex(h => h === f.title.toLowerCase());
-                    if (idx !== -1) columnMapping[f.key] = idx;
-                });
+            // 3. ЧТЕНИЕ И ВАЛИДАЦИЯ КОЛОНОК
+            const reader = new FileReader();
+            reader.onload = async (evt) => {
+                try {
+                    const bstr = evt.target?.result;
+                    const wb = XLSX.read(bstr, { type: 'binary' });
+                    let ws = wb.Sheets["Лист1"] || wb.Sheets[wb.SheetNames[0]];
+                    const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+                    
+                    if (!data || data.length === 0) throw new Error("File is empty");
 
-                const missing = taskFields.filter(f => f.required && columnMapping[f.key] === undefined);
-                if (missing.length > 0) throw new Error(`${t.infoColsTitle} ${missing.map(f=>f.title).join(", ")}`);
-
-                const rows = data.slice(1);
-                const parsedTasks: any[] = [];
-                const vErrors: string[] = [];
-
-                rows.forEach((row, i) => {
-                    const r = row as any[]; if (!r || r.length === 0) return;
-                    const isEmpty = Object.values(columnMapping).every(idx => !r[idx]); if (isEmpty) return;
-
-                    const task: any = {}; let rowOk = true;
+                    const headers = (data[0] as any[]).map(h => h?.toString().trim().toLowerCase());
+                    const columnMapping: Record<string, number> = {};
+                    
                     taskFields.forEach(f => {
-                        if (!rowOk) return;
-                        
-                        // Игнорируем системные поля, которых нет в Excel
-                        if (f.key === 'original_time_spent' || f.key === 'is_edited') return;
-
-                        const colIdx = columnMapping[f.key];
-                        if (colIdx === undefined) {
-                            if (f.required) { vErrors.push(`${t.row} ${i+2}: ${t.infoColsTitle} '${f.title}'`); rowOk = false; }
-                            return;
-                        }
-
-                        const val = r[colIdx];
-                        if (f.required && (val === undefined || val === null || val === "")) { 
-                            vErrors.push(`${t.row} ${i+2}: '${f.title}' ${t.fieldIsEmpty}`); rowOk = false; return; 
-                        }
-                        
-                        if (f.type === 'number') {
-                            const num = Number(val?.toString().replace(',', '.'));
-                            if (isNaN(num)) { vErrors.push(`${t.row} ${i+2}: '${f.title}' ${t.mustBeNumber}`); rowOk = false; }
-                            task[f.key] = num || 0;
-                        } else if (f.type === 'date') {
-                            task[f.key] = parseDateStrict(val) || new Date(fileDate).toISOString();
-                        } else if (f.key === 'status') {
-                            if (val && !validStatuses.includes(val.toString().trim())) {
-                                vErrors.push(`${t.row} ${i+2}: '${f.title}' ${t.invalidValue}`); rowOk = false;
-                            }
-                            task[f.key] = val?.toString().trim() || "";
-                        } else task[f.key] = val?.toString().trim() || "";
+                        const idx = headers.findIndex(h => h === f.title.toLowerCase());
+                        if (idx !== -1) columnMapping[f.key] = idx;
                     });
-                    if (rowOk) parsedTasks.push(task);
-                });
 
-                if (vErrors.length > 0) { setError(t.validationFailed); setDetailedErrors(vErrors); setUploading(false); return; }
+                    const missing = taskFields.filter(f => f.required && columnMapping[f.key] === undefined);
+                    if (missing.length > 0) throw new Error(`${t.infoColsTitle} ${missing.map(f=>f.title).join(", ")}`);
 
-                const formData = new FormData();
-                formData.append('excel_file', file);
-                formData.append('file_name', file.name);
-                formData.append('file_date', new Date(fileDate).toISOString());
-                formData.append('data', JSON.stringify(parsedTasks));
-                formData.append('user', targetUserId || '');
-                if (isSuperAdmin && currentUser) formData.append('uploaded_by', currentUser.id);
+                    const rows = data.slice(1);
+                    const parsedTasks: any[] = [];
+                    const vErrors: string[] = [];
 
-                await pb.collection('tasks').create(formData);
-                clearRankingCache(); 
-                
-                if (isSuperAdmin && currentUser) {
-                    try {
+                    rows.forEach((row, i) => {
+                        const r = row as any[]; if (!r || r.length === 0) return;
+                        const isEmpty = Object.values(columnMapping).every(idx => !r[idx]); if (isEmpty) return;
+
+                        const task: any = {}; let rowOk = true;
+                        taskFields.forEach(f => {
+                            if (!rowOk || f.key === 'original_time_spent' || f.key === 'is_edited') return;
+                            const colIdx = columnMapping[f.key];
+                            const val = r[colIdx];
+                            if (f.required && (val === undefined || val === null || val === "")) { 
+                                vErrors.push(`${t.row} ${i+2}: '${f.title}' ${t.fieldIsEmpty}`); rowOk = false; return; 
+                            }
+                            if (f.type === 'number') {
+                                const num = Number(val?.toString().replace(',', '.'));
+                                if (isNaN(num)) { vErrors.push(`${t.row} ${i+2}: '${f.title}' ${t.mustBeNumber}`); rowOk = false; }
+                                task[f.key] = num || 0;
+                            } else if (f.key === 'status') {
+                                if (val && !validStatuses.includes(val.toString().trim())) {
+                                    vErrors.push(`${t.row} ${i+2}: '${f.title}' ${t.invalidValue}`); rowOk = false;
+                                }
+                                task[f.key] = val?.toString().trim() || "";
+                            } else task[f.key] = val?.toString().trim() || "";
+                        });
+                        if (rowOk) parsedTasks.push(task);
+                    });
+
+                    if (vErrors.length > 0) { setError(t.validationFailed); setDetailedErrors(vErrors); setUploading(false); return; }
+
+                    // 4. ЗАГРУЗКА
+                    const formData = new FormData();
+                    formData.append('excel_file', file);
+                    formData.append('file_name', file.name);
+                    formData.append('file_date', fileDate + " 12:00:00");
+                    formData.append('data', JSON.stringify(parsedTasks));
+                    formData.append('user', targetUserId || '');
+                    if (isSuperAdmin && currentUser) formData.append('uploaded_by', currentUser.id);
+
+                    await pb.collection('tasks').create(formData);
+                    
+                    if (isSuperAdmin && currentUser) {
                         await pb.collection('upload_logs').create({ file_name: file.name, uploaded_by: currentUser.id, target_user: targetUserId });
-                    } catch (logErr) {
-                        console.error("Failed to create upload log:", logErr);
-                        // Non-blocking error
                     }
-                }
 
-                setMessage(`${t.successMsg} ${parsedTasks.length} ${t.tasksCount}.`);
-                setRefreshStats(prev => prev + 1); 
-            } catch (err: any) { setError(handleApiError(err, t)); } finally { setUploading(false); }
-        };
-        reader.readAsBinaryString(file);
+                    setMessage(`${t.successMsg} ${parsedTasks.length} ${t.tasksCount}.`);
+                    setRefreshStats(prev => prev + 1); 
+                } catch (err: any) { setError(handleApiError(err, t)); } finally { setUploading(false); }
+            };
+            reader.readAsBinaryString(file);
+        } catch (err: any) { 
+            setError(handleApiError(err, t)); 
+            setUploading(false); 
+        }
     };
 
     let statusContent;

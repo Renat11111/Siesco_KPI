@@ -23,19 +23,31 @@ export default function DailyStats({ lang, refreshTrigger }: DailyStatsProps) {
     useEffect(() => {
         fetchDailyStats();
 
-        // Smart Realtime: update only if the task belongs to ME
-        pb.collection('tasks').subscribe('*', (e) => {
-             const currentUser = pb.authStore.record;
-             if (currentUser && e.record && e.record.user === currentUser.id) {
-                 // console.log("Relevant realtime update:", e.action);
-                 fetchDailyStats();
-             }
-        });
+        let unsubTasks: () => void;
+        let unsubGlobal: () => void;
+
+        const setup = async () => {
+            const currentUser = pb.authStore.record;
+            // 1. Smart Realtime: update only if the task belongs to ME
+            unsubTasks = await pb.collection('tasks').subscribe('*', (e) => {
+                if (currentUser && e.record && e.record.user === currentUser.id) {
+                    fetchDailyStats();
+                }
+            });
+
+            // 2. GLOBAL Realtime: update on any ranking update (e.g. admin upload)
+            unsubGlobal = await pb.collection('ranking_updates').subscribe('*', () => {
+                fetchDailyStats();
+            });
+        };
+
+        setup();
 
         return () => {
-            pb.collection('tasks').unsubscribe('*');
+            if (unsubTasks) unsubTasks();
+            if (unsubGlobal) unsubGlobal();
         };
-    }, [refreshTrigger]);
+    }, [refreshTrigger, pb.authStore.record?.id]);
 
     const fetchDailyStats = async () => {
         const user = pb.authStore.record;

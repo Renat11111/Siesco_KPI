@@ -105,24 +105,28 @@ export default function TaskList({ lang }: TaskListProps) {
 
     // Realtime Subscription
     useEffect(() => {
-        const handleRealtime = (e: any) => {
-            // Logic: Update if the changed record belongs to the user currently being viewed (selectedUserId)
-            // Or if we are viewing "All users" (not implemented yet, but good for future)
-            // For now, strict check on user ID ensures we don't refresh for unrelated events.
+        const setup = async () => {
             const targetUser = selectedUserId || pb.authStore.record?.id;
             
-            if (targetUser && e.record && e.record.user === targetUser) {
-                // Call fetchTasks with CURRENT state values (captured in closure by useEffect dependencies)
+            // Подписка на задачи
+            await pb.collection('tasks').subscribe('*', (e) => {
+                if (targetUser && e.record && e.record.user === targetUser) {
+                    fetchTasks(startDate, endDate, selectedUserId, showUnfinishedOnly, showGroupedCompleted);
+                }
+            });
+
+            // Подписка на глобальный сигнал
+            await pb.collection('ranking_updates').subscribe('*', () => {
                 fetchTasks(startDate, endDate, selectedUserId, showUnfinishedOnly, showGroupedCompleted);
-            }
+            });
         };
 
-        pb.collection('tasks').subscribe('*', handleRealtime);
+        setup();
 
         return () => {
-            pb.collection('tasks').unsubscribe('*');
+            // Оставляем подписки живыми для стабильности в Wails
         };
-    }, [selectedUserId, startDate, endDate, showUnfinishedOnly, showGroupedCompleted]); // Re-subscribe when filters change to keep closure fresh
+    }, [selectedUserId, startDate, endDate, showUnfinishedOnly, showGroupedCompleted]);
 
     const loadConfig = async () => {
         try {

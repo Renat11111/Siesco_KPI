@@ -95,6 +95,7 @@ export interface TranslationKeys {
     statsRankingTitle: string;
     statsYearlyRankingTitle: string;
     statsYourRank: string;
+    statsHoursUnit: string;
     returnedTasksTitle: string;
     legendCurrent: string;
     legendPrev: string;
@@ -227,6 +228,7 @@ export const translations: Record<Language, TranslationKeys> = {
         statsRankingTitle: "Рейтинг среди коллег (часы за месяц)",
         statsYearlyRankingTitle: "Рейтинг среди коллег (часы за год)",
         statsYourRank: "Вы",
+        statsHoursUnit: "ч",
         returnedTasksTitle: "Возвращенные задачи",
         legendCurrent: "Текущий месяц",
         legendPrev: "Прошлый месяц",
@@ -359,6 +361,7 @@ export const translations: Record<Language, TranslationKeys> = {
         statsRankingTitle: "Həmkarlar arasında reytinq (aylıq saatlar)",
         statsYearlyRankingTitle: "Həmkarlar arasında reytinq (illik saatlar)",
         statsYourRank: "Siz",
+        statsHoursUnit: "s",
         returnedTasksTitle: "Qaytarılmış tapşırıqlar",
         legendCurrent: "Cari ay",
         legendPrev: "Keçmiş ay",
@@ -491,6 +494,7 @@ export const translations: Record<Language, TranslationKeys> = {
         statsRankingTitle: "Colleague Ranking (Monthly Hours)",
         statsYearlyRankingTitle: "Colleague Ranking (Yearly Hours)",
         statsYourRank: "You",
+        statsHoursUnit: "h",
         returnedTasksTitle: "Returned Tasks",
         legendCurrent: "Current Month",
         legendPrev: "Previous Month",

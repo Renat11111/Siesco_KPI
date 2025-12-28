@@ -91,10 +91,12 @@ export default function DailyComparisonChart({ lang, refreshTrigger }: DailyComp
         } catch (err) { console.error(err); } finally { setLoading(false); }
     };
 
-    const width = 1000; const height = 250; const padding = 30;
-    const graphWidth = width - padding * 2; const graphHeight = height - padding * 2;
-    const getX = (day: number) => padding + ((day - 1) / 30) * graphWidth;
-    const getY = (val: number) => height - padding - (val / (maxValue * 1.1)) * graphHeight;
+    const width = 1000; const height = 280; const paddingLeft = 50; const paddingRight = 30; const paddingTop = 40; const paddingBottom = 40;
+    const graphWidth = width - paddingLeft - paddingRight; 
+    const graphHeight = height - paddingTop - paddingBottom;
+    
+    const getX = (day: number) => paddingLeft + ((day - 1) / 30) * graphWidth;
+    const getY = (val: number) => height - paddingBottom - (val / (maxValue * 1.1 || 1)) * graphHeight;
 
     const makePath = (type: 'current' | 'prev') => {
         return chartData.map((d, i) => {
@@ -107,7 +109,7 @@ export default function DailyComparisonChart({ lang, refreshTrigger }: DailyComp
         if (!containerRef.current) return;
         const rect = containerRef.current.getBoundingClientRect();
         const x = (e.clientX - rect.left) * (width / rect.width);
-        let index = Math.round(((x - padding) / graphWidth) * 30);
+        let index = Math.round(((x - paddingLeft) / graphWidth) * 30);
         if (index < 0) index = 0; if (index > 30) index = 30;
         setHoveredDay(index + 1);
     };
@@ -126,17 +128,61 @@ export default function DailyComparisonChart({ lang, refreshTrigger }: DailyComp
                     <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}><span style={{width: '10px', height: '10px', borderRadius: '2px', background: getColor('warning')}}></span>{t.legendPrev}</div>
                 </div>
             </div>
-            <div ref={containerRef} style={{width: '100%', height: '300px', position: 'relative', cursor: 'crosshair'}} onMouseMove={handleMouseMove} onMouseLeave={()=>setHoveredDay(null)}>
+            <div ref={containerRef} style={{width: '100%', height: '320px', position: 'relative', cursor: 'crosshair'}} onMouseMove={handleMouseMove} onMouseLeave={()=>setHoveredDay(null)}>
                 {loading ? <div style={{textAlign: 'center', padding: '5rem'}}>{t.loading}</div> : (
                     <>
                         <div style={{ position: 'absolute', top: activeData ? getY(activeData.current) - 70 : 0, left: activeData ? (getX(activeData.day) / width) * 100 + '%' : '0', transform: `translateX(-50%)`, backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '8px 12px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', pointerEvents: 'none', zIndex: 100, opacity: activeData ? 1 : 0, transition: 'opacity 0.2s' }}>
                             {activeData && <div><div style={{fontSize: '0.7rem', fontWeight: 600}}>{activeData.day}</div><div>{t.legendCurrent}: {activeData.current.toFixed(1)}ч</div><div>{t.legendPrev}: {activeData.prev.toFixed(1)}ч</div></div>}
                         </div>
                         <svg viewBox={`0 0 ${width} ${height}`} style={{width: '100%', height: '100%', overflow: 'visible'}}>
-                            {[0, 0.25, 0.5, 0.75, 1].map(f => <line key={f} x1={padding} y1={getY(maxValue*f)} x2={width-padding} y2={getY(maxValue*f)} stroke="#e5e7eb" strokeDasharray="4" />)}
-                            <path d={makePath('prev')} fill="none" stroke={getColor('warning')} strokeWidth="2" strokeOpacity="0.5" />
-                            <path d={makePath('current')} fill="none" stroke={getColor('primary')} strokeWidth="3" />
-                            {activeData && <g><line x1={getX(activeData.day)} y1={padding} x2={getX(activeData.day)} y2={height-padding} stroke="#94a3b8" strokeDasharray="4" /><circle cx={getX(activeData.day)} cy={getY(activeData.prev)} r={5} fill={getColor('warning')} /><circle cx={getX(activeData.day)} cy={getY(activeData.current)} r={6} fill={getColor('primary')} /></g>}
+                            {/* Сетка и шкала Y */}
+                            {[0, 0.25, 0.5, 0.75, 1].map(f => {
+                                const val = maxValue * f;
+                                return (
+                                    <g key={f}>
+                                        <line x1={paddingLeft} y1={getY(val)} x2={width-paddingRight} y2={getY(val)} stroke="#e5e7eb" strokeDasharray="4" />
+                                        <text x={paddingLeft - 10} y={getY(val) + 4} textAnchor="end" style={{fontSize: '11px', fill: '#94a3b8', fontWeight: 500}}>
+                                            {val % 1 === 0 ? val : val.toFixed(1)}{t.statsHoursUnit || 'ч'}
+                                        </text>
+                                    </g>
+                                );
+                            })}
+
+                            {/* Шкала X (все дни месяца) */}
+                            {chartData.map((d) => (
+                                <text key={d.day} x={getX(d.day)} y={height - 15} textAnchor="middle" style={{fontSize: '10px', fill: '#94a3b8', fontWeight: 500}}>{d.day}</text>
+                            ))}
+
+                            <path d={makePath('prev')} fill="none" stroke={getColor('warning')} strokeWidth="2" strokeOpacity="0.4" />
+                            <path d={makePath('current')} fill="none" stroke={getColor('primary')} strokeWidth="3" strokeOpacity="0.8" />
+                            
+                            {/* Постоянные яркие точки и подписи значений */}
+                            {chartData.map((d) => (
+                                <g key={d.day}>
+                                    {d.prev > 0 && (
+                                        <circle cx={getX(d.day)} cy={getY(d.prev)} r="3.5" fill={getColor('warning')} stroke="white" strokeWidth="1.5" />
+                                    )}
+                                    {d.current > 0 && (
+                                        <g>
+                                            <circle cx={getX(d.day)} cy={getY(d.current)} r="4.5" fill={getColor('primary')} stroke="white" strokeWidth="2" />
+                                            <text 
+                                                x={getX(d.day)} 
+                                                y={getY(d.current) - 10} 
+                                                textAnchor="middle" 
+                                                style={{fontSize: '10px', fill: getColor('primary'), fontWeight: 700}}
+                                            >
+                                                {d.current.toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US', { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
+                                            </text>
+                                        </g>
+                                    )}
+                                </g>
+                            ))}
+
+                            {activeData && <g>
+                                <line x1={getX(activeData.day)} y1={paddingTop} x2={getX(activeData.day)} y2={height-paddingBottom} stroke="#94a3b8" strokeDasharray="4" />
+                                <circle cx={getX(activeData.day)} cy={getY(activeData.prev)} r={6} fill={getColor('warning')} stroke="white" strokeWidth="2" />
+                                <circle cx={getX(activeData.day)} cy={getY(activeData.current)} r={7} fill={getColor('primary')} stroke="white" strokeWidth="2" />
+                            </g>}
                         </svg>
                     </>
                 )}

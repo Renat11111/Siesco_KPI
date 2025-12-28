@@ -17,18 +17,31 @@ export default function MonthlyStats({ lang, refreshTrigger, style, className }:
     useEffect(() => {
         fetchMonthlyStats();
 
-        // Realtime subscription
-        pb.collection('tasks').subscribe('*', (e) => {
+        let unsubTasks: () => void;
+        let unsubGlobal: () => void;
+
+        const setup = async () => {
             const user = pb.authStore.record;
-            if (user && e.record && e.record.user === user.id) {
+            // Realtime subscription for specific tasks
+            unsubTasks = await pb.collection('tasks').subscribe('*', (e) => {
+                if (user && e.record && e.record.user === user.id) {
+                    fetchMonthlyStats();
+                }
+            });
+
+            // GLOBAL Realtime: update on any ranking update (e.g. admin upload)
+            unsubGlobal = await pb.collection('ranking_updates').subscribe('*', () => {
                 fetchMonthlyStats();
-            }
-        });
+            });
+        };
+
+        setup();
 
         return () => {
-            pb.collection('tasks').unsubscribe('*');
+            if (unsubTasks) unsubTasks();
+            if (unsubGlobal) unsubGlobal();
         };
-    }, [refreshTrigger]);
+    }, [refreshTrigger, pb.authStore.record?.id]);
 
     const fetchMonthlyStats = async () => {
         const user = pb.authStore.record;
