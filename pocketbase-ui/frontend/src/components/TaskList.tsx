@@ -397,7 +397,18 @@ export default function TaskList({ lang }: TaskListProps) {
 
         if (field.type === 'date') {
             if (!value) return '-';
-            return new Date(value).toLocaleDateString(
+            
+            let dateObj: Date;
+            // Если это число (например, 46001), конвертируем из формата Excel (сериальное число)
+            if (!isNaN(Number(value)) && Number(value) > 40000 && Number(value) < 60000) {
+                dateObj = new Date((Number(value) - 25569) * 86400 * 1000);
+            } else {
+                dateObj = new Date(value);
+            }
+
+            if (isNaN(dateObj.getTime())) return String(value);
+
+            return dateObj.toLocaleDateString(
                 lang === 'ru' ? 'ru-RU' : (lang === 'az' ? 'az-Latn-AZ' : 'en-US')
             );
         }

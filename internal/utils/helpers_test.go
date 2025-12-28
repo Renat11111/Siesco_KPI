@@ -1,8 +1,50 @@
 package utils
 
 import (
+	"encoding/json"
 	"testing"
 )
+
+func TestParseTaskData(t *testing.T) {
+	jsonStr := `[{"task_number": 123, "time_spent": 2.5, "status": "completed", "project": "Test"}]`
+	tasks, err := ParseTaskData(jsonStr)
+	if err != nil {
+		t.Fatalf("ParseTaskData failed: %v", err)
+	}
+
+	if len(tasks) != 1 {
+		t.Fatalf("Expected 1 task, got %d", len(tasks))
+	}
+
+	if tasks[0]["status"] != "completed" {
+		t.Errorf("Expected status 'completed', got %q", tasks[0]["status"])
+	}
+
+	// Verify json.Number precision
+	hours := GetTimeSpent(tasks[0]["time_spent"])
+	if hours != 2.5 {
+		t.Errorf("Expected 2.5 hours, got %v", hours)
+	}
+}
+
+func TestGetTimeSpent(t *testing.T) {
+	cases := []struct {
+		input    interface{}
+		expected float64
+	}{
+		{json.Number("5.5"), 5.5},
+		{5.5, 5.5},
+		{"string", 0},
+		{nil, 0},
+	}
+
+	for _, c := range cases {
+		result := GetTimeSpent(c.input)
+		if result != c.expected {
+			t.Errorf("GetTimeSpent(%v) == %v, want %v", c.input, result, c.expected)
+		}
+	}
+}
 
 func TestNormalizeStatus(t *testing.T) {
 	cases := []struct {

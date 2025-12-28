@@ -64,8 +64,7 @@ func HandleActualTasks(pbApp *pocketbase.PocketBase, context *app.AppContext, e 
 		e.Response.Header().Set("X-Warning", "Results truncated (10000+ items)")
 	}
 
-	latestTasks := make(map[string]map[string]interface{})
-	taskMeta := make(map[string]map[string]string) 
+	latestTasks := make(map[string]app.TaskEntry)
 
 	for _, r := range records {
 		taskList, err := utils.ParseTaskData(r.GetString(app.FieldData))
@@ -78,21 +77,15 @@ func HandleActualTasks(pbApp *pocketbase.PocketBase, context *app.AppContext, e 
 			taskNum := fmt.Sprintf("%v", t["task_number"])
 			if taskNum == "" { continue }
 
+			t["source_file_date"] = fileDate
+			t["source_file_id"] = fileId
 			latestTasks[taskNum] = t
-			taskMeta[taskNum] = map[string]string{
-				"source_file_date": fileDate,
-				"source_file_id":   fileId,
-			}
 		}
 	}
 
-	result := []map[string]interface{}{}
-	for tNum, task := range latestTasks {
+	result := []app.TaskEntry{}
+	for _, task := range latestTasks {
 		if utils.IsStatusInProgress(task["status"], context.StatusMap) {
-			if meta, exists := taskMeta[tNum]; exists {
-				task["source_file_date"] = meta["source_file_date"]
-				task["source_file_id"] = meta["source_file_id"]
-			}
 			result = append(result, task)
 		}
 	}
@@ -121,10 +114,8 @@ func HandleCompletedTasksGrouped(pbApp *pocketbase.PocketBase, context *app.AppC
 	}
 
 	type AggregatedTask struct {
-		LatestData      map[string]interface{}
+		LatestData      app.TaskEntry
 		TotalTimeSpent  float64
-		LatestFileDate  string
-		LatestFileId    string
 	}
 
 	taskMap := make(map[string]*AggregatedTask)
@@ -144,25 +135,21 @@ func HandleCompletedTasksGrouped(pbApp *pocketbase.PocketBase, context *app.AppC
 				taskMap[taskNumStr] = &AggregatedTask{
 					LatestData:     t,
 					TotalTimeSpent: 0,
-					LatestFileDate: fileDate,
-					LatestFileId:   fileId,
 				}
 			}
 
 			agg := taskMap[taskNumStr]
 			agg.TotalTimeSpent += utils.GetTimeSpent(t["time_spent"])
+			t["source_file_date"] = fileDate
+			t["source_file_id"] = fileId
 			agg.LatestData = t
-			agg.LatestFileDate = fileDate
-			agg.LatestFileId = fileId
 		}
 	}
 
-	result := []map[string]interface{}{}
+	result := []app.TaskEntry{}
 	for _, agg := range taskMap {
 		if utils.IsStatusCompleted(agg.LatestData["status"], context.StatusMap) {
 			agg.LatestData["time_spent"] = agg.TotalTimeSpent
-			agg.LatestData["source_file_date"] = agg.LatestFileDate
-			agg.LatestData["source_file_id"] = agg.LatestFileId
 			result = append(result, agg.LatestData)
 		}
 	}
@@ -190,8 +177,7 @@ func HandleReturnedTasks(pbApp *pocketbase.PocketBase, context *app.AppContext, 
 		e.Response.Header().Set("X-Warning", "Results truncated (10000+ items)")
 	}
 
-	latestTasks := make(map[string]map[string]interface{})
-	taskMeta := make(map[string]map[string]string) 
+	latestTasks := make(map[string]app.TaskEntry)
 
 	for _, r := range records {
 		taskList, err := utils.ParseTaskData(r.GetString(app.FieldData))
@@ -204,21 +190,15 @@ func HandleReturnedTasks(pbApp *pocketbase.PocketBase, context *app.AppContext, 
 			taskNum := fmt.Sprintf("%v", t["task_number"])
 			if taskNum == "" { continue }
 
+			t["source_file_date"] = fileDate
+			t["source_file_id"] = fileId
 			latestTasks[taskNum] = t
-			taskMeta[taskNum] = map[string]string{
-				"source_file_date": fileDate,
-				"source_file_id":   fileId,
-			}
 		}
 	}
 
-	result := []map[string]interface{}{}
-	for tNum, task := range latestTasks {
+	result := []app.TaskEntry{}
+	for _, task := range latestTasks {
 		if utils.IsStatusInProgressReturn(task["status"], context.StatusMap) {
-			if meta, exists := taskMeta[tNum]; exists {
-				task["source_file_date"] = meta["source_file_date"]
-				task["source_file_id"] = meta["source_file_id"]
-			}
 			result = append(result, task)
 		}
 	}
@@ -268,7 +248,7 @@ func HandleUpdateTaskTime(pbApp *pocketbase.PocketBase, context *app.AppContext,
 			if currentTime != data.NewTime {
 				updated = true
 				alreadyEdited, _ := t["is_edited"].(bool)
-				if !alreadyEdited { t["original_time_spent"] = currentTime }
+				if !alreadyEdited { t["original_time_spent"] = t["time_spent"] }
 				t["time_spent"] = data.NewTime
 				t["is_edited"] = true
 				taskList[i] = t 

@@ -181,7 +181,7 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
             reader.onload = async (evt) => {
                 try {
                     const bstr = evt.target?.result;
-                    const wb = XLSX.read(bstr, { type: 'binary' });
+                    const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
                     let ws = wb.Sheets["Лист1"] || wb.Sheets[wb.SheetNames[0]];
                     const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
                     
@@ -214,16 +214,22 @@ export default function TaskUpload({ lang }: TaskUploadProps) {
                             if (f.required && (val === undefined || val === null || val === "")) { 
                                 vErrors.push(`${t.row} ${i+2}: '${f.title}' ${t.fieldIsEmpty}`); rowOk = false; return; 
                             }
+                            
                             if (f.type === 'number') {
                                 const num = Number(val?.toString().replace(',', '.'));
                                 if (isNaN(num)) { vErrors.push(`${t.row} ${i+2}: '${f.title}' ${t.mustBeNumber}`); rowOk = false; }
                                 task[f.key] = num || 0;
+                            } else if (f.type === 'date' && val instanceof Date) {
+                                // Превращаем объект Date в строку YYYY-MM-DD для корректного отображения и фильтрации
+                                task[f.key] = val.toISOString().split('T')[0];
                             } else if (f.key === 'status') {
                                 if (val && !validStatuses.includes(val.toString().trim())) {
                                     vErrors.push(`${t.row} ${i+2}: '${f.title}' ${t.invalidValue}`); rowOk = false;
                                 }
                                 task[f.key] = val?.toString().trim() || "";
-                            } else task[f.key] = val?.toString().trim() || "";
+                            } else {
+                                task[f.key] = val?.toString().trim() || "";
+                            }
                         });
                         if (rowOk) parsedTasks.push(task);
                     });

@@ -5,12 +5,21 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"my_pocketbase_app/internal/app"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 )
+
+var taskSlicePool = sync.Pool{
+	New: func() interface{} {
+		// Предварительная аллокация на 64 задачи для снижения количества расширений слайса
+		s := make([]app.TaskEntry, 0, 64)
+		return &s
+	},
+}
 
 func IsValidYear(year string) bool {
 	_, err := time.Parse("2006", year)
@@ -94,14 +103,19 @@ func StreamRanking(pbApp *pocketbase.PocketBase, start, end string, statusMap ma
 		}
 		entry := statsMap[userId]
 
-		// Use our helper
-		taskList, err := ParseTaskData(dataJson)
-		if err != nil {
+		// Используем пул слайсов для минимизации аллокаций
+		taskListPtr := taskSlicePool.Get().(*[]app.TaskEntry)
+		*taskListPtr = (*taskListPtr)[:0] // Сброс длины при сохранении емкости
+
+		decoder := json.NewDecoder(strings.NewReader(dataJson))
+		decoder.UseNumber()
+		if err := decoder.Decode(taskListPtr); err != nil {
 			log.Printf("Error parsing streamed task data for user %s: %v", userId, err)
+			taskSlicePool.Put(taskListPtr)
 			continue
 		}
 
-		for _, t := range taskList {
+		for _, t := range *taskListPtr {
 			entry.TotalHours += GetTimeSpent(t["time_spent"])
 			
 			tNum := fmt.Sprintf("%v", t["task_number"])
@@ -109,6 +123,7 @@ func StreamRanking(pbApp *pocketbase.PocketBase, start, end string, statusMap ma
 				entry.TaskStatuses[tNum] = fmt.Sprintf("%v", t["status"])
 			}
 		}
+		taskSlicePool.Put(taskListPtr) // Возвращаем в пул
 	}
 
 	// Fetch users mapping (small data, usually < 100 users)
@@ -156,11 +171,11 @@ func StreamRanking(pbApp *pocketbase.PocketBase, start, end string, statusMap ma
 
 // --- Helpers ---
 
-func ParseTaskData(jsonStr string) ([]map[string]interface{}, error) {
-	if jsonStr == "" {
-		return []map[string]interface{}{}, nil
+func ParseTaskData(jsonStr string) ([]app.TaskEntry, error) {
+	if len(jsonStr) < 2 {
+		return []app.TaskEntry{}, nil
 	}
-	var taskList []map[string]interface{}
+	var taskList []app.TaskEntry
 	decoder := json.NewDecoder(strings.NewReader(jsonStr))
 	decoder.UseNumber()
 	if err := decoder.Decode(&taskList); err != nil {
