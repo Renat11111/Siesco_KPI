@@ -73,6 +73,7 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
         const authUser = pb.authStore.record;
         if (!authUser?.id) return;
         
+        console.log("[LeaveRequests] Fetching requests for start:", filterStart, "end:", filterEnd);
         setLoading(true);
         try {
             let filterExpr = `created >= "${filterStart} 00:00:00" && created <= "${filterEnd} 23:59:59"`;
@@ -87,9 +88,10 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
                 requestKey: null
             });
 
+            console.log("[LeaveRequests] Found records:", records.items.length);
             setRequests(records.items);
         } catch (err: any) {
-            console.error(err);
+            console.error("[LeaveRequests] Fetch error:", err);
         } finally {
             setLoading(false);
         }
@@ -102,8 +104,25 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
 
         let unsub: UnsubscribeFunc;
         const setup = async () => {
-            unsub = await pb.collection('leave_requests').subscribe('*', (e) => {
-                fetchRequests();
+            console.log("[LeaveRequests] Subscribing to leave_requests Realtime...");
+            unsub = await pb.collection('leave_requests').subscribe('*', async (e) => {
+                console.log("[LeaveRequests] Realtime event:", e.action, e.record.id);
+                if (e.action === 'delete') {
+                    setRequests(prev => prev.filter(r => r.id !== e.record.id));
+                } else if (e.action === 'create') {
+                    try {
+                        const fullRecord = await pb.collection('leave_requests').getOne<LeaveRequest>(e.record.id, { 
+                            expand: 'user',
+                            requestKey: null 
+                        });
+                        setRequests(prev => [fullRecord, ...prev]);
+                    } catch (err) {
+                        console.error("[LeaveRequests] Error fetching new record:", err);
+                        fetchRequests();
+                    }
+                } else {
+                    fetchRequests();
+                }
             });
         };
         setup();

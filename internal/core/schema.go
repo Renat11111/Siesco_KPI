@@ -1,6 +1,7 @@
 package core
 
 import (
+	"log"
 	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -123,16 +124,27 @@ func EnsureCoreCollections(app core.App) error {
 		notifsCol.Fields.Add(&core.TextField{Name: "message", Required: true})
 		notifsCol.Fields.Add(&core.BoolField{Name: "is_read"})
 		notifsCol.Fields.Add(&core.TextField{Name: "type"})
-		app.Save(notifsCol)
+		notifsCol.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
+		if err := app.Save(notifsCol); err != nil {
+			return err
+		}
+	}
+
+	// Проверяем наличие поля created для существующих баз
+	if notifsCol.Fields.GetByName("created") == nil {
+		notifsCol.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
 	}
 
 	// ЖЕСТКИЙ ФИКС ПРАВИЛ (БЕЗ .id)
+	log.Printf("[INFO] Applying API rules for 'notifications' (Rule: %s)", RuleNotification)
 	notifsCol.ListRule = types.Pointer(RuleNotification)
 	notifsCol.ViewRule = types.Pointer(RuleNotification)
 	notifsCol.UpdateRule = types.Pointer(RuleNotification)
 	notifsCol.DeleteRule = types.Pointer(RuleNotification)
 	notifsCol.CreateRule = types.Pointer(RuleAuthOnly)
-	app.Save(notifsCol)
+	if err := app.Save(notifsCol); err != nil {
+		log.Printf("[ERROR] Failed to save 'notifications' rules: %v", err)
+	}
 
 	rUpdates, _ := app.FindCollectionByNameOrId("ranking_updates")
 	if rUpdates == nil {

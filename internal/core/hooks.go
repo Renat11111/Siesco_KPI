@@ -79,31 +79,36 @@ func RegisterLeaveRequestHooks(app *pocketbase.PocketBase) {
 			return err
 		}
 
-		// ЛОГИКА УВЕДОМЛЕНИЙ (СИНХРОННО как в твоем анализе)
-		userRec, _ := app.FindRecordById("users", userId)
+		// ЛОГИКА УВЕДОМЛЕНИЙ
+		userRec, _ := e.App.FindRecordById("users", userId)
 		userName := "Unknown"
 		if userRec != nil {
 			userName = userRec.GetString("name")
 		}
 
-		admins, err := app.FindRecordsByFilter("users", "superadmin=true || is_coordinator=true", "", 100, 0, nil)
+		admins, err := e.App.FindRecordsByFilter("users", "superadmin=true || is_coordinator=true", "", 100, 0, nil)
 		if err != nil || len(admins) == 0 {
+			fmt.Printf("[WARN] No admins found to notify for leave request from %s\n", userId)
 			return nil
 		}
 
-		notifsCol, _ := app.FindCollectionByNameOrId("notifications")
+		notifsCol, _ := e.App.FindCollectionByNameOrId("notifications")
 		senderAddress := app.Settings().Meta.SenderAddress
 		senderName := app.Settings().Meta.SenderName
 
 		for _, admin := range admins {
-			// А. Внутреннее уведомление (СИНХРОННО для надежности)
+			// А. Внутреннее уведомление
 			if notifsCol != nil {
 				rec := pbCore.NewRecord(notifsCol)
 				rec.Set("user", admin.Id)
 				rec.Set("message", "📅 Новый запрос на отгул: "+userName)
 				rec.Set("type", "warning")
 				rec.Set("is_read", false)
-				e.App.Save(rec)
+				if err := e.App.Save(rec); err != nil {
+					fmt.Printf("[ERROR] Failed to save notification for admin %s: %v\n", admin.Id, err)
+				} else {
+					fmt.Printf("[INFO] Notification created for admin %s\n", admin.Id)
+				}
 			}
 
 			// Б. Email (в фоне)

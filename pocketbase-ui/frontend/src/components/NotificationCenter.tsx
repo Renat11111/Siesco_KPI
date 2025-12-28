@@ -27,17 +27,20 @@ export default function NotificationCenter() {
     }, []);
 
     const fetchNotifications = async () => {
-        if (!userId) return;
+        if (!userId) {
+            console.log("[NotificationCenter] No userId, skipping fetch");
+            return;
+        }
         try {
-            // Пункт 3 твоего анализа: обход кэша через уникальный ключ
+            console.log("[NotificationCenter] Fetching notifications...");
             const records = await pb.collection('notifications').getList<Notification>(1, 50, {
                 sort: '-created',
-                filter: `user = "${userId}"`,
                 requestKey: 'notifications_' + Date.now()
             });
+            console.log("[NotificationCenter] Received records:", records.items.length);
             setNotifications(records.items);
         } catch (e) {
-            console.error("Failed to load notifications", e);
+            console.error("[NotificationCenter] Fetch error:", e);
         }
     };
 
@@ -47,26 +50,15 @@ export default function NotificationCenter() {
             return;
         }
 
+        console.log("[NotificationCenter] Setting up sub for user:", userId);
         fetchNotifications();
 
         let unsub: UnsubscribeFunc;
         
         const setup = async () => {
             unsub = await pb.collection('notifications').subscribe('*', (e) => {
-                // Пункт 2 твоего анализа: логирование и проверка ID
-                console.log('Realtime notification event:', {
-                    action: e.action,
-                    recordUser: e.record.user,
-                    currentUserId: userId
-                });
-
-                const eventUserId = typeof e.record.user === 'string' 
-                    ? e.record.user 
-                    : e.record.user?.id;
-                    
-                if (eventUserId === userId) {
-                    fetchNotifications();
-                }
+                console.log('[NotificationCenter] Realtime event received:', e.action, e.record.id);
+                fetchNotifications();
             });
         };
 
