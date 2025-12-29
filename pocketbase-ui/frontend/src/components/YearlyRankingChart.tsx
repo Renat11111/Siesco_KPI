@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import pb, { getYearlyRanking } from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
 import { getColor } from '../lib/colors';
+import { Card } from './ui/Card';
 
 interface YearlyRankingChartProps {
     lang: Language;
@@ -83,16 +84,19 @@ export default function YearlyRankingChart({ lang }: YearlyRankingChartProps) {
     const colorBarMe = getColor('primary');      // Indigo
     const colorBarOther = getColor('slate');     // Gray
 
-    return (
-        <div className="dashboard-card">
-             <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem'}}>
-                <div style={{padding: '6px', background: colorBgIcon, borderRadius: '6px', color: colorIcon}}>
-                     {/* Trophy / Award Icon */}
-                     <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7" /></svg>
-                </div>
-                <h3 style={{margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)'}}>{t.statsYearlyRankingTitle}</h3>
+    const chartTitle = (
+        <>
+            <div style={{padding: '6px', background: colorBgIcon, borderRadius: '6px', color: colorIcon}}>
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7" />
+                </svg>
             </div>
+            <h3 style={{margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)'}}>{t.statsYearlyRankingTitle}</h3>
+        </>
+    );
 
+    return (
+        <Card title={chartTitle}>
             <div style={{width: '100%', minHeight: '100px', position: 'relative'}}>
                 {loading ? (
                      <div style={{textAlign: 'center', color: 'var(--text-muted)', padding: '2rem'}}>
@@ -176,9 +180,10 @@ export default function YearlyRankingChart({ lang }: YearlyRankingChartProps) {
                                 );
                             })}
                         </div>
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-}
+                                        </div>
+                                    )}
+                                </div>
+                            </Card>
+                        );
+                    }
+                    

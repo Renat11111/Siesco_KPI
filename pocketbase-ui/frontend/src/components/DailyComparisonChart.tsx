@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import pb from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
 import { getColor } from '../lib/colors';
+import { Card } from './ui/Card';
 
 interface DailyComparisonChartProps {
     lang: Language;
@@ -116,18 +117,32 @@ export default function DailyComparisonChart({ lang, refreshTrigger }: DailyComp
 
     const activeData = hoveredDay ? chartData[hoveredDay - 1] : null;
 
-    return (
-        <div className="dashboard-card">
-             <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
-                <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
-                    <div style={{padding: '6px', background: '#f3f4f6', borderRadius: '6px', color: '#4b5563'}}><svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" /></svg></div>
-                    <h3 style={{margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)'}}>{t.statsChartTitle}</h3>
-                </div>
-                <div style={{display: 'flex', gap: '1rem', fontSize: '0.75rem', fontWeight: 500}}>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}><span style={{width: '10px', height: '10px', borderRadius: '2px', background: getColor('primary')}}></span>{t.legendCurrent}</div>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}><span style={{width: '10px', height: '10px', borderRadius: '2px', background: getColor('warning')}}></span>{t.legendPrev}</div>
-                </div>
+    const chartTitle = (
+        <>
+            <div style={{padding: '6px', background: '#f3f4f6', borderRadius: '6px', color: '#4b5563'}}>
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                </svg>
             </div>
+            <h3 style={{margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)'}}>{t.statsChartTitle}</h3>
+        </>
+    );
+
+    const chartLegend = (
+        <div style={{display: 'flex', gap: '1rem', fontSize: '0.75rem', fontWeight: 500}}>
+            <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
+                <span style={{width: '10px', height: '10px', borderRadius: '2px', background: getColor('primary')}}></span>
+                {t.legendCurrent}
+            </div>
+            <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
+                <span style={{width: '10px', height: '10px', borderRadius: '2px', background: getColor('warning')}}></span>
+                {t.legendPrev}
+            </div>
+        </div>
+    );
+
+    return (
+        <Card title={chartTitle} extra={chartLegend}>
             <div ref={containerRef} style={{width: '100%', height: '320px', position: 'relative', cursor: 'crosshair'}} onMouseMove={handleMouseMove} onMouseLeave={()=>setHoveredDay(null)}>
                 {loading ? <div style={{textAlign: 'center', padding: '5rem'}}>{t.loading}</div> : (
                     <>
@@ -187,6 +202,6 @@ export default function DailyComparisonChart({ lang, refreshTrigger }: DailyComp
                     </>
                 )}
             </div>
-        </div>
+        </Card>
     );
 }

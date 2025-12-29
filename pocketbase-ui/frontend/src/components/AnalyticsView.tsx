@@ -4,6 +4,8 @@ import pb from '../lib/pocketbase';
 import DailyComparisonChart from './DailyComparisonChart';
 import ColleagueRankingChart from './ColleagueRankingChart';
 import YearlyRankingChart from './YearlyRankingChart';
+import { Badge } from './ui/Badge';
+import { Card } from './ui/Card';
 
 interface AnalyticsViewProps {
     lang: Language;
@@ -13,6 +15,14 @@ function ReturnedTasksCard({ lang }: { lang: Language }) {
     const t = translations[lang];
     const [tasks, setTasks] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+
+    const thStyle: React.CSSProperties = {
+        textAlign: 'left',
+        padding: '8px',
+        color: '#64748b',
+        fontWeight: 600,
+        borderBottom: '1px solid #e2e8f0'
+    };
 
     useEffect(() => {
         const fetchTasks = async () => {
@@ -64,31 +74,24 @@ function ReturnedTasksCard({ lang }: { lang: Language }) {
 
     if (loading && tasks.length === 0) return null; // Or skeleton
 
-    return (
-        <div className="dashboard-card" style={{marginTop: '0'}}>
-            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem'}}>
-                <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
-                    <div style={{padding: '6px', background: '#fff1f2', borderRadius: '6px', color: '#e11d48'}}>
-                        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                        </svg>
-                    </div>
-                    <h3 style={{margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)'}}>
-                        {t.returnedTasksTitle}
-                    </h3>
-                </div>
-                <span style={{
-                    backgroundColor: tasks.length > 0 ? '#ffe4e6' : '#f1f5f9', 
-                    color: tasks.length > 0 ? '#e11d48' : '#64748b',
-                    padding: '2px 8px', 
-                    borderRadius: '12px', 
-                    fontSize: '0.85rem', 
-                    fontWeight: 700
-                }}>
-                    {tasks.length}
-                </span>
+    const cardTitle = (
+        <>
+            <div style={{padding: '6px', background: '#fff1f2', borderRadius: '6px', color: '#e11d48'}}>
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                </svg>
             </div>
+            <h3 style={{margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)'}}>
+                {t.returnedTasksTitle}
+            </h3>
+        </>
+    );
 
+    return (
+        <Card 
+            title={cardTitle}
+            extra={<Badge color={tasks.length > 0 ? 'red' : 'gray'}>{tasks.length}</Badge>}
+        >
             {tasks.length === 0 ? (
                 <div style={{padding: '1rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.9rem'}}>
                     {t.noTasks || "No tasks"}
@@ -97,11 +100,11 @@ function ReturnedTasksCard({ lang }: { lang: Language }) {
                 <div style={{overflowX: 'auto'}}>
                     <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem'}}>
                         <thead>
-                            <tr style={{borderBottom: '1px solid #e2e8f0'}}>
-                                <th style={{textAlign: 'left', padding: '8px', color: '#64748b', fontWeight: 600}}>{t.colTaskNum}</th>
-                                <th style={{textAlign: 'left', padding: '8px', color: '#64748b', fontWeight: 600}}>{t.colProject}</th>
-                                <th style={{textAlign: 'left', padding: '8px', color: '#64748b', fontWeight: 600}}>{t.colDate}</th>
-                                <th style={{textAlign: 'left', padding: '8px', color: '#64748b', fontWeight: 600}}>{t.colDesc}</th>
+                            <tr>
+                                <th style={thStyle}>{t.colTaskNum}</th>
+                                <th style={thStyle}>{t.colProject}</th>
+                                <th style={thStyle}>{t.colDate}</th>
+                                <th style={thStyle}>{t.colDesc}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -127,7 +130,7 @@ function ReturnedTasksCard({ lang }: { lang: Language }) {
                     </table>
                 </div>
             )}
-        </div>
+        </Card>
     );
 }
 

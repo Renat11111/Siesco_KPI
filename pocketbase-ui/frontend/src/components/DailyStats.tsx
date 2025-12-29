@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import pb from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
 import { getColor } from '../lib/colors';
+import { Card } from './ui/Card';
 
 interface DailyStatsProps {
     lang: Language;
@@ -99,18 +100,26 @@ export default function DailyStats({ lang, refreshTrigger }: DailyStatsProps) {
         }
     };
 
+    const statsTitle = (
+        <>
+            <div style={{padding: '6px', background: '#eff6ff', borderRadius: '6px', color: 'var(--primary)'}}>
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+            </div>
+            <h3 style={{margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)'}}>{t.statsTitle}</h3>
+        </>
+    );
+
+    const statsExtra = (
+        <small className="date-badge">
+            {new Date().toLocaleDateString(lang === 'ru' ? 'ru-RU' : (lang === 'az' ? 'az-Latn-AZ' : 'en-US'))}
+        </small>
+    );
+
     return (
-        <div className="dashboard-card">
+        <Card title={statsTitle} extra={statsExtra} style={{ height: '100%' }}>
             <div style={{display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0}}> 
-                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem'}}>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
-                        <div style={{padding: '6px', background: '#eff6ff', borderRadius: '6px', color: 'var(--primary)'}}>
-                            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
-                        </div>
-                        <h3 style={{margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)'}}>{t.statsTitle}</h3>
-                    </div>
-                    <small className="date-badge">{new Date().toLocaleDateString(lang === 'ru' ? 'ru-RU' : (lang === 'az' ? 'az-Latn-AZ' : 'en-US'))}</small>
-                </div>
                 {loading ? (
                     <div style={{fontSize: '0.9rem', color: 'var(--text-muted)'}}>{t.statsLoading}</div>
                 ) : (
@@ -144,6 +153,6 @@ export default function DailyStats({ lang, refreshTrigger }: DailyStatsProps) {
                     </div>
                 )}
             </div>
-        </div>
+        </Card>
     );
 }

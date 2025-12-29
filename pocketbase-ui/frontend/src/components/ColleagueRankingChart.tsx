@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import pb, { getMonthlyRanking } from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
-import { getColor } from '../lib/colors'; // Импортируем getColor
+import { getColor } from '../lib/colors';
+import { Card } from './ui/Card';
 
 interface ColleagueRankingChartProps {
     lang: Language;
@@ -84,15 +85,19 @@ export default function ColleagueRankingChart({ lang }: ColleagueRankingChartPro
     const gap = 12;
     const maxBarWidth = 100; // Percentage
 
-    return (
-        <div className="dashboard-card">
-             <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem'}}>
-                <div style={{padding: '6px', background: getColor('emerald', 50), borderRadius: '6px', color: getColor('emerald', 600)}}>
-                     <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                </div>
-                <h3 style={{margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)'}}>{t.statsRankingTitle}</h3>
+    const chartTitle = (
+        <>
+            <div style={{padding: '6px', background: getColor('emerald', 50), borderRadius: '6px', color: getColor('emerald', 600)}}>
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
             </div>
+            <h3 style={{margin: 0, fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)'}}>{t.statsRankingTitle}</h3>
+        </>
+    );
 
+    return (
+        <Card title={chartTitle}>
             <div style={{width: '100%', minHeight: '100px', position: 'relative'}}>
                 {loading ? (
                      <div style={{textAlign: 'center', color: 'var(--text-muted)', padding: '2rem'}}>
@@ -179,6 +184,6 @@ export default function ColleagueRankingChart({ lang }: ColleagueRankingChartPro
                     </div>
                 )}
             </div>
-        </div>
+        </Card>
     );
 }
