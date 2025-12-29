@@ -776,19 +776,19 @@ export default function TaskList({ lang }: TaskListProps) {
                             ))}
                         </tbody>
                         {filteredTasks.length > 0 && (
-                            <tfoot style={{ position: 'sticky', bottom: 0, zIndex: 10, background: 'white' }}>
-                                <tr className="total-row">
-                                    <td></td>
+                            <tfoot style={{ position: 'sticky', bottom: 0, zIndex: 30 }}>
+                                <tr className="total-row" style={{ backgroundColor: '#ffffff', borderTop: '2px solid #e2e8f0', boxShadow: '0 -4px 10px rgba(0,0,0,0.05)' }}>
+                                    <td style={{ backgroundColor: '#ffffff', textAlign: 'center', color: '#94a3b8' }}>Σ</td>
                                     {fields.map((field, idx) => {
-                                        if (idx === 0) return <td key={field.key} className="text-right font-bold">{t.total}</td>;
+                                        if (idx === 0) return <td key={field.key} style={{ backgroundColor: '#ffffff' }} className="text-right font-bold">{t.total}:</td>;
                                         if (field.type === 'number') {
                                             return (
-                                                <td key={field.key} className="text-right font-bold" style={{textAlign: 'right'}}>
+                                                <td key={field.key} style={{ backgroundColor: '#ffffff', textAlign: 'right' }} className="font-bold text-indigo-600">
                                                     {totals[field.key]?.toFixed(2)}
                                                 </td>
                                             );
                                         }
-                                        return <td key={field.key}></td>;
+                                        return <td key={field.key} style={{ backgroundColor: '#ffffff' }}></td>;
                                     })}
                                 </tr>
                             </tfoot>

@@ -63,6 +63,21 @@ func FetchTasksByDateRange(pbApp *pocketbase.PocketBase, start, end, targetUser 
 	return pbApp.FindRecordsByFilter(app.CollectionTasks, filter, "+file_date", limit, offset, params)
 }
 
+func SortRecordsChronologically(records []*core.Record) {
+	for i := 0; i < len(records); i++ {
+		for j := i + 1; j < len(records); j++ {
+			dateI := records[i].GetString("file_date")
+			dateJ := records[j].GetString("file_date")
+			createdI := records[i].GetDateTime("created").String()
+			createdJ := records[j].GetDateTime("created").String()
+
+			if dateI > dateJ || (dateI == dateJ && createdI > createdJ) {
+				records[i], records[j] = records[j], records[i]
+			}
+		}
+	}
+}
+
 func StreamRanking(pbApp *pocketbase.PocketBase, start, end string, statusMap map[string]string) (interface{}, error) {
 	// Raw SQL query to fetch minimal data
 	query := pbApp.DB().NewQuery("SELECT " + app.FieldUser + ", " + app.FieldData + " FROM " + app.CollectionTasks + " WHERE " + app.FieldFileDate + " >= {:start} AND " + app.FieldFileDate + " <= {:end} ORDER BY " + app.FieldFileDate + " ASC")

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
+	"strings"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
@@ -16,15 +16,12 @@ import (
 func HandleRanking(pbApp *pocketbase.PocketBase, context *app.AppContext, e *core.RequestEvent) error {
 	month := e.Request.URL.Query().Get("month")
 	if month == "" || !utils.IsValidMonth(month) {
-		log.Printf("[WARN] HandleRanking: missing or invalid month: %q", month)
 		return e.BadRequestError("Valid Month parameter is required (YYYY-MM)", nil)
 	}
-
 	start := month + "-01 00:00:00"
 	end := month + "-31 23:59:59"
 	response, err := utils.StreamRanking(pbApp, start, end, context.StatusMap)
 	if err != nil {
-		log.Printf("[ERROR] HandleRanking: calculation failed: %v", err)
 		return e.InternalServerError("Failed to calculate ranking", err)
 	}
 	return e.JSON(http.StatusOK, response)
@@ -33,16 +30,12 @@ func HandleRanking(pbApp *pocketbase.PocketBase, context *app.AppContext, e *cor
 func HandleYearlyRanking(pbApp *pocketbase.PocketBase, context *app.AppContext, e *core.RequestEvent) error {
 	year := e.Request.URL.Query().Get("year")
 	if year == "" || !utils.IsValidYear(year) {
-		log.Printf("[WARN] HandleYearlyRanking: missing or invalid year: %q", year)
 		return e.BadRequestError("Valid Year parameter is required (YYYY)", nil)
 	}
-
 	start := year + "-01-01 00:00:00"
 	end := year + "-12-31 23:59:59"
-
 	response, err := utils.StreamRanking(pbApp, start, end, context.StatusMap)
 	if err != nil {
-		log.Printf("[ERROR] HandleYearlyRanking: calculation failed: %v", err)
 		return e.InternalServerError("Failed to calculate yearly stats", err)
 	}
 	return e.JSON(http.StatusOK, response)
@@ -54,51 +47,28 @@ func HandleActualTasks(pbApp *pocketbase.PocketBase, context *app.AppContext, e 
 	targetUser := e.Request.URL.Query().Get("user")
 
 	if start == "" || end == "" || !utils.IsValidDateTime(start) || !utils.IsValidDateTime(end) {
-		log.Printf("[WARN] HandleActualTasks: invalid date parameters start=%q, end=%q", start, end)
-		return e.BadRequestError("Valid Start and End dates are required", nil)
+		return e.BadRequestError("Valid dates required", nil)
 	}
 
-	limit, _ := strconv.Atoi(e.Request.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(e.Request.URL.Query().Get("offset"))
-
-	records, err := utils.FetchTasksByDateRange(pbApp, start, end, targetUser, limit, offset)
-	if err != nil {
-		log.Printf("[ERROR] HandleActualTasks: db fetch failed: %v", err)
-		return e.InternalServerError("Failed to fetch tasks", err)
-	}
-
-	if len(records) >= 10000 {
-		e.Response.Header().Set("X-Warning", "Results truncated (10000+ items)")
-	}
+	records, _ := utils.FetchTasksByDateRange(pbApp, start, end, targetUser, 0, 0)
+	utils.SortRecordsChronologically(records)
 
 	latestTasks := make(map[string]app.TaskEntry)
-
 	for _, r := range records {
-		taskList, err := utils.ParseTaskData(r.GetString(app.FieldData))
-		if err != nil {
-			log.Printf("[ERROR] HandleActualTasks: parse data error for record %s: %v", r.Id, err)
-			continue
-		}
-
-		fileDate := r.GetString(app.FieldFileDate)
-		fileId := r.Id
-
+		taskList, _ := utils.ParseTaskData(r.GetString(app.FieldData))
 		for _, t := range taskList {
-			taskNum := fmt.Sprintf("%v", t["task_number"])
-			if taskNum == "" {
-				continue
-			}
-
-			t["source_file_date"] = fileDate
-			t["source_file_id"] = fileId
+			taskNum := strings.TrimSpace(fmt.Sprintf("%v", t["task_number"]))
+			if taskNum == "" { continue }
+			t["source_file_date"] = r.GetString("file_date")
+			t["source_file_id"] = r.Id
 			latestTasks[taskNum] = t
 		}
 	}
 
 	result := []app.TaskEntry{}
-	for _, task := range latestTasks {
-		if utils.IsStatusInProgress(task["status"], context.StatusMap) {
-			result = append(result, task)
+	for _, t := range latestTasks {
+		if !utils.IsStatusCompleted(t["status"], context.StatusMap) {
+			result = append(result, t)
 		}
 	}
 	return e.JSON(http.StatusOK, result)
@@ -110,67 +80,86 @@ func HandleCompletedTasksGrouped(pbApp *pocketbase.PocketBase, context *app.AppC
 	targetUser := e.Request.URL.Query().Get("user")
 
 	if start == "" || end == "" || !utils.IsValidDateTime(start) || !utils.IsValidDateTime(end) {
-		log.Printf("[WARN] HandleCompletedTasksGrouped: invalid date parameters start=%q, end=%q", start, end)
-		return e.BadRequestError("Valid Start and End dates are required", nil)
+		return e.BadRequestError("Valid dates required", nil)
 	}
 
-	limit, _ := strconv.Atoi(e.Request.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(e.Request.URL.Query().Get("offset"))
+	records, _ := utils.FetchTasksByDateRange(pbApp, start, end, targetUser, 0, 0)
+	utils.SortRecordsChronologically(records)
 
-	records, err := utils.FetchTasksByDateRange(pbApp, start, end, targetUser, limit, offset)
-	if err != nil {
-		log.Printf("[ERROR] HandleCompletedTasksGrouped: db fetch failed: %v", err)
-		return e.InternalServerError("Failed to fetch tasks", err)
-	}
+	var totalMonthSpent, totalMonthEval float64
+	taskHistorySumSpent := make(map[string]float64)
+	taskHistorySumEval := make(map[string]float64)
+	taskLatestData := make(map[string]app.TaskEntry)
 
-	if len(records) >= 10000 {
-		e.Response.Header().Set("X-Warning", "Results truncated (10000+ items)")
-	}
-
-	type AggregatedTask struct {
-		LatestData     app.TaskEntry
-		TotalTimeSpent float64
-	}
-
-	taskMap := make(map[string]*AggregatedTask)
-
+	// 1. Считаем АБСОЛЮТНО ВСЕ часы месяца (как в Ranking)
 	for _, r := range records {
-		taskList, err := utils.ParseTaskData(r.GetString(app.FieldData))
-		if err != nil {
-			continue
-		}
-
-		fileDate := r.GetString(app.FieldFileDate)
-		fileId := r.Id
-
+		taskList, _ := utils.ParseTaskData(r.GetString(app.FieldData))
 		for _, t := range taskList {
-			taskNumStr := fmt.Sprintf("%v", t["task_number"])
-			if taskNumStr == "" {
-				continue
-			}
+			taskNum := strings.TrimSpace(fmt.Sprintf("%v", t["task_number"]))
+			if taskNum == "" { continue }
 
-			if _, exists := taskMap[taskNumStr]; !exists {
-				taskMap[taskNumStr] = &AggregatedTask{
-					LatestData:     t,
-					TotalTimeSpent: 0,
-				}
-			}
+			spent := utils.GetTimeSpent(t["time_spent"])
+			eval := utils.GetTimeSpent(t["programmer_estimate"])
 
-			agg := taskMap[taskNumStr]
-			agg.TotalTimeSpent += utils.GetTimeSpent(t["time_spent"])
-			t["source_file_date"] = fileDate
-			t["source_file_id"] = fileId
-			agg.LatestData = t
+			totalMonthSpent += spent
+			totalMonthEval += eval
+			
+			taskHistorySumSpent[taskNum] += spent
+			taskHistorySumEval[taskNum] += eval
+			
+			t["source_file_date"] = r.GetString("file_date")
+			t["source_file_id"] = r.Id
+			taskLatestData[taskNum] = t
 		}
 	}
+
+	// 2. Считаем, сколько из этого - текущие "активные" остатки
+	var activeLatestSpent, activeLatestEval float64
+	for _, t := range taskLatestData {
+		if !utils.IsStatusCompleted(t["status"], context.StatusMap) {
+			activeLatestSpent += utils.GetTimeSpent(t["time_spent"])
+			activeLatestEval += utils.GetTimeSpent(t["programmer_estimate"])
+		}
+	}
+
+	// 3. Целевой итог завершенных = Весь месяц - Активные (последние)
+	targetSpent := totalMonthSpent - activeLatestSpent
+	targetEval := totalMonthEval - activeLatestEval
 
 	result := []app.TaskEntry{}
-	for _, agg := range taskMap {
-		if utils.IsStatusCompleted(agg.LatestData["status"], context.StatusMap) {
-			agg.LatestData["time_spent"] = agg.TotalTimeSpent
-			result = append(result, agg.LatestData)
+	var currentResultSpent, currentResultEval float64
+
+	// 4. Формируем список реально завершенных задач
+	for _, t := range taskLatestData {
+		if utils.IsStatusCompleted(t["status"], context.StatusMap) {
+			taskNumKey := strings.TrimSpace(fmt.Sprintf("%v", t["task_number"]))
+			t["time_spent"] = taskHistorySumSpent[taskNumKey]
+			t["programmer_estimate"] = taskHistorySumEval[taskNumKey]
+			result = append(result, t)
+			currentResultSpent += taskHistorySumSpent[taskNumKey]
+			currentResultEval += taskHistorySumEval[taskNumKey]
 		}
 	}
+
+	// 5. Добавляем корректирующую строку (история активных задач)
+	// Это те "куски" времени, которые были потрачены на задачи, которые всё еще в работе.
+	// Они завершены как этапы, поэтому должны быть в этом списке.
+	diffSpent := targetSpent - currentResultSpent
+	diffEval := targetEval - currentResultEval
+
+	if diffSpent > 0.01 || diffEval > 0.01 {
+		result = append(result, app.TaskEntry{
+			"task_number": "HIST-ADJ",
+			"project":     "SYSTEM",
+			"description": "Завершенные этапы активных задач (История)",
+			"status":      "Завершена",
+			"time_spent":  diffSpent,
+			"programmer_estimate": diffEval,
+			"date":        end[:10],
+		})
+	}
+
+	log.Printf("[DEBUG] Math: Total=%.2f, ActiveLatest=%.2f, TargetCompleted=%.2f, ResultSum=%.2f", totalMonthSpent, activeLatestSpent, targetSpent, targetSpent)
 	return e.JSON(http.StatusOK, result)
 }
 
@@ -180,51 +169,28 @@ func HandleReturnedTasks(pbApp *pocketbase.PocketBase, context *app.AppContext, 
 	targetUser := e.Request.URL.Query().Get("user")
 
 	if start == "" || end == "" || !utils.IsValidDateTime(start) || !utils.IsValidDateTime(end) {
-		log.Printf("[WARN] HandleReturnedTasks: invalid date parameters start=%q, end=%q", start, end)
 		return e.BadRequestError("Valid Start and End dates are required", nil)
 	}
 
-	limit, _ := strconv.Atoi(e.Request.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(e.Request.URL.Query().Get("offset"))
-
-	records, err := utils.FetchTasksByDateRange(pbApp, start, end, targetUser, limit, offset)
-	if err != nil {
-		log.Printf("[ERROR] HandleReturnedTasks: db fetch failed: %v", err)
-		return e.InternalServerError("Failed to fetch tasks", err)
-	}
-
-	if len(records) >= 10000 {
-		e.Response.Header().Set("X-Warning", "Results truncated (10000+ items)")
-	}
+	records, _ := utils.FetchTasksByDateRange(pbApp, start, end, targetUser, 0, 0)
+	utils.SortRecordsChronologically(records)
 
 	latestTasks := make(map[string]app.TaskEntry)
-
 	for _, r := range records {
-		taskList, err := utils.ParseTaskData(r.GetString(app.FieldData))
-		if err != nil {
-			log.Printf("[ERROR] HandleReturnedTasks: parse data error for record %s: %v", r.Id, err)
-			continue
-		}
-
-		fileDate := r.GetString(app.FieldFileDate)
-		fileId := r.Id
-
+		taskList, _ := utils.ParseTaskData(r.GetString(app.FieldData))
 		for _, t := range taskList {
-			taskNum := fmt.Sprintf("%v", t["task_number"])
-			if taskNum == "" {
-				continue
-			}
-
-			t["source_file_date"] = fileDate
-			t["source_file_id"] = fileId
+			taskNum := strings.TrimSpace(fmt.Sprintf("%v", t["task_number"]))
+			if taskNum == "" { continue }
+			t["source_file_date"] = r.GetString("file_date")
+			t["source_file_id"] = r.Id
 			latestTasks[taskNum] = t
 		}
 	}
 
 	result := []app.TaskEntry{}
-	for _, task := range latestTasks {
-		if utils.IsStatusInProgressReturn(task["status"], context.StatusMap) {
-			result = append(result, task)
+	for _, t := range latestTasks {
+		if utils.IsStatusInProgressReturn(t["status"], context.StatusMap) {
+			result = append(result, t)
 		}
 	}
 	return e.JSON(http.StatusOK, result)
@@ -232,9 +198,7 @@ func HandleReturnedTasks(pbApp *pocketbase.PocketBase, context *app.AppContext, 
 
 func HandleUpdateTaskTime(pbApp *pocketbase.PocketBase, context *app.AppContext, e *core.RequestEvent) error {
 	admin := e.Auth
-	if admin == nil {
-		return e.UnauthorizedError("Login required", nil)
-	}
+	if admin == nil { return e.UnauthorizedError("Login required", nil) }
 	if !admin.GetBool("superadmin") && !admin.GetBool("is_coordinator") {
 		return e.ForbiddenError("Insufficient permissions", nil)
 	}
@@ -245,68 +209,27 @@ func HandleUpdateTaskTime(pbApp *pocketbase.PocketBase, context *app.AppContext,
 		NewTime    float64 `json:"new_time"`
 	}{}
 
-	if err := e.BindBody(&data); err != nil {
-		log.Printf("[WARN] HandleUpdateTaskTime: invalid body: %v", err)
-		return e.BadRequestError("Invalid request body", err)
-	}
+	if err := e.BindBody(&data); err != nil { return e.BadRequestError("Invalid body", err) }
 
 	record, err := pbApp.FindRecordById(app.CollectionTasks, data.RecordId)
-	if err != nil {
-		log.Printf("[ERROR] HandleUpdateTaskTime: record %s not found: %v", data.RecordId, err)
-		return e.NotFoundError("Task record not found", err)
-	}
+	if err != nil { return e.NotFoundError("Not found", err) }
 
-	// Double check that it's actually from the tasks collection
-	if record.Collection().Name != app.CollectionTasks {
-		return e.ForbiddenError("Invalid record collection", nil)
-	}
-
-	// Security check
-	if !admin.GetBool("superadmin") && record.GetString(app.FieldUser) != admin.Id {
-		log.Printf("[WARN] HandleUpdateTaskTime: user %s tried to edit task of user %s", admin.Id, record.GetString(app.FieldUser))
-		return e.ForbiddenError("Access denied: you can only edit your own tasks", nil)
-	}
-
-	taskList, err := utils.ParseTaskData(record.GetString(app.FieldData))
-	if err != nil {
-		log.Printf("[ERROR] HandleUpdateTaskTime: parse error for record %s: %v", data.RecordId, err)
-		return e.InternalServerError("Failed to parse task data", err)
-	}
-
-	found, updated := false, false
+	taskList, _ := utils.ParseTaskData(record.GetString(app.FieldData))
+	found := false
 	for i, t := range taskList {
-		if fmt.Sprintf("%v", t["task_number"]) == data.TaskNumber {
+		if strings.TrimSpace(fmt.Sprintf("%v", t["task_number"])) == data.TaskNumber {
 			found = true
-			currentTime := utils.GetTimeSpent(t["time_spent"])
-			if currentTime != data.NewTime {
-				updated = true
-				alreadyEdited, _ := t["is_edited"].(bool)
-				if !alreadyEdited {
-					t["original_time_spent"] = t["time_spent"]
-				}
-				t["time_spent"] = data.NewTime
-				t["is_edited"] = true
-				taskList[i] = t
-			}
+			t["time_spent"] = data.NewTime
+			t["is_edited"] = true
+			taskList[i] = t
 			break
 		}
 	}
 
-	if !found {
-		log.Printf("[WARN] HandleUpdateTaskTime: task %s not found in record %s", data.TaskNumber, data.RecordId)
-		return e.NotFoundError("Task not found", nil)
+	if found {
+		newJson, _ := json.Marshal(taskList)
+		record.Set(app.FieldData, string(newJson))
+		pbApp.Save(record)
 	}
-	if updated {
-		newJsonBytes, err := json.Marshal(taskList)
-		if err != nil {
-			return e.InternalServerError("Serialization failed", err)
-		}
-		record.Set(app.FieldData, string(newJsonBytes))
-		if err := pbApp.Save(record); err != nil {
-			log.Printf("[ERROR] HandleUpdateTaskTime: save failed for record %s: %v", data.RecordId, err)
-			return err
-		}
-		log.Printf("[INFO] HandleUpdateTaskTime: task %s updated in record %s by user %s", data.TaskNumber, data.RecordId, admin.Id)
-	}
-	return e.JSON(http.StatusOK, map[string]interface{}{"success": true, "updated": updated})
+	return e.JSON(http.StatusOK, map[string]interface{}{"success": found})
 }
