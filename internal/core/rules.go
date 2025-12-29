@@ -13,7 +13,7 @@ const (
 	// Правило для ОТГУЛОВ
 	RuleLeaveView   = "@request.auth.id != '' && (user = @request.auth.id || @request.auth.superadmin = true || @request.auth.is_coordinator = true)"
 	RuleLeaveDelete = "@request.auth.id != '' && (user = @request.auth.id || @request.auth.superadmin = true || @request.auth.is_coordinator = true)"
-	
+
 	// Правило для КОЛОКОЛЬЧИКА
 	RuleNotification = "user = @request.auth.id"
 )

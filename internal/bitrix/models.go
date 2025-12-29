@@ -51,6 +51,7 @@ type BxTask struct {
 	Description   string      `json:"description"`
 	Priority      string      `json:"priority"`
 	Status        string      `json:"status"`
+	ChangedDate   string      `json:"changedDate"`
 	StatusChanged string      `json:"statusChangedDate"`
 	CreatedDate   string      `json:"createdDate"`
 	Deadline      string      `json:"deadline"`

@@ -35,6 +35,26 @@ func EnsureCoreCollections(app core.App) error {
 	if users.Fields.GetByName("is_coordinator") == nil {
 		users.Fields.Add(&core.BoolField{Name: "is_coordinator"})
 	}
+
+	// Оживляем интерфейс админки
+	if f := users.Fields.GetByName("name"); f != nil {
+		if tf, ok := f.(*core.TextField); ok {
+			log.Println("[Core] Ensuring 'name' is Presentable in 'users'...")
+			tf.Presentable = true
+		}
+	}
+
+	// Связь с Bitrix
+	if users.Fields.GetByName("bitrix_user") == nil {
+		bitrixUsers, _ := app.FindCollectionByNameOrId("bitrix_users")
+		if bitrixUsers != nil {
+			users.Fields.Add(&core.RelationField{
+				Name:         "bitrix_user",
+				CollectionId: bitrixUsers.Id,
+				MaxSelect:    1,
+			})
+		}
+	}
 	app.Save(users)
 
 	leaveReqs, err := app.FindCollectionByNameOrId("leave_requests")
@@ -163,11 +183,19 @@ func EnsureStatusCollection(app core.App) error {
 	col, err := app.FindCollectionByNameOrId("statuses")
 	if err != nil {
 		col = core.NewBaseCollection("statuses")
-		col.Fields.Add(&core.TextField{Name: "title", Required: true})
+		col.Fields.Add(&core.TextField{Name: "title", Required: true, Presentable: true})
 		col.Fields.Add(&core.TextField{Name: "slug", Required: true})
 		col.Fields.Add(&core.SelectField{Name: "color", Required: true, MaxSelect: 1, Values: []string{"slate", "gray", "zinc", "neutral", "stone", "red", "orange", "amber", "yellow", "lime", "green", "emerald", "teal", "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink", "rose", "success", "warning", "danger", "info", "primary", "secondary"}})
 		col.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
 		app.Save(col)
+	} else {
+		if f := col.Fields.GetByName("title"); f != nil {
+			if tf, ok := f.(*core.TextField); ok {
+				log.Println("[Core] Ensuring 'title' is Presentable in 'statuses'...")
+				tf.Presentable = true
+				app.Save(col)
+			}
+		}
 	}
 	col.ListRule = types.Pointer(RuleAuthOnly)
 	return app.Save(col)
@@ -178,13 +206,21 @@ func EnsureTaskFieldsCollection(app core.App) error {
 	if err != nil {
 		col = core.NewBaseCollection("task_fields")
 		col.Fields.Add(&core.TextField{Name: "key", Required: true})
-		col.Fields.Add(&core.TextField{Name: "title", Required: true})
+		col.Fields.Add(&core.TextField{Name: "title", Required: true, Presentable: true})
 		col.Fields.Add(&core.TextField{Name: "type", Required: true})
 		col.Fields.Add(&core.TextField{Name: "width"})
 		col.Fields.Add(&core.BoolField{Name: "required"})
 		col.Fields.Add(&core.BoolField{Name: "filterable"})
 		col.Fields.Add(&core.NumberField{Name: "order"})
 		app.Save(col)
+	} else {
+		if f := col.Fields.GetByName("title"); f != nil {
+			if tf, ok := f.(*core.TextField); ok {
+				log.Println("[Core] Ensuring 'title' is Presentable in 'task_fields'...")
+				tf.Presentable = true
+				app.Save(col)
+			}
+		}
 	}
 	col.ListRule = types.Pointer(RuleAuthOnly)
 	return app.Save(col)

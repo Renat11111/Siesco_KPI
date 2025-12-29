@@ -1,48 +1,46 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Language, translations } from '../lib/translations';
-import pb, { getSetting } from '../lib/pocketbase';
+import pb from '../lib/pocketbase';
+import { RecordModel } from 'pocketbase';
 
 interface BitrixTasksProps {
     lang: Language;
 }
 
-interface BitrixUser {
-    id: string;
-    name: string;
-    icon?: string;
-    workPosition?: string;
+interface BitrixUser extends RecordModel {
+    bitrix_id: number;
+    full_name: string;
 }
 
-interface BitrixGroup {
-    id: string;
+interface BitrixDepartment extends RecordModel {
+    bitrix_id: number;
     name: string;
 }
 
-interface BitrixTask {
-    id: string;
+interface BitrixGroup extends RecordModel {
+    bitrix_id: number;
+    name: string;
+}
+
+interface BitrixTask extends RecordModel {
+    bitrix_id: number;
     title: string;
-    status: string;
-    priority: string;
-    deadline?: string;
-    createdDate: string;
-    responsibleId: string;
-    responsible?: BitrixUser;
-    group?: BitrixGroup;
-    commentsCount?: string;
-}
-
-interface BitrixResponse {
-    result: {
-        tasks: any[];
+    description: string;
+    status: number;
+    priority: number;
+    deadline: string;
+    created_date: string;
+    responsible: string; 
+    group: string;
+    comments_count: number;
+    expand?: {
+        responsible?: BitrixUser;
+        group?: BitrixGroup;
     };
-    total: number;
-    next?: number;
 }
 
-const IT_DEPARTMENT_ID = 5;
-const CTO_USER_ID = '7';
-
-const getStatusConfig = (status: string) => {
+const getStatusConfig = (status: number | string) => {
+    const statusStr = String(status);
     const base = {
         padding: '2px 10px',
         borderRadius: '12px',
@@ -52,7 +50,7 @@ const getStatusConfig = (status: string) => {
         whiteSpace: 'nowrap' as const
     };
 
-    switch (status) {
+    switch (statusStr) {
         case '1': return { label: 'Новая', style: { ...base, background: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd' } };
         case '2': return { label: 'Ждет выполнения', style: { ...base, background: '#f1f5f9', color: '#475569', border: '1px solid #e2e8f0' } };
         case '3': return { label: 'Выполняется', style: { ...base, background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' } };
@@ -61,21 +59,7 @@ const getStatusConfig = (status: string) => {
         case '6': return { label: 'Отложена', style: { ...base, background: '#fff7ed', color: '#9a3412', border: '1px solid #ffedd5' } };
         case '7': return { label: 'Возвращена', style: { ...base, background: '#fee2e2', color: '#dc2626', border: '1px solid #fecaca' } };
         case '-1': return { label: 'Просрочена', style: { ...base, background: '#7f1d1d', color: '#ffffff', border: '1px solid #991b1b' } };
-        default: return { label: status, style: { ...base, background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' } };
-    }
-};
-
-const getStatusName = (status: string) => {
-    switch (status) {
-        case '1': return 'Новая';
-        case '2': return 'Ожидание';
-        case '3': return 'В работе';
-        case '4': return 'Контроль';
-        case '5': return 'Завершена';
-        case '6': return 'Отложена';
-        case '7': return 'Возвращена';
-        case '-1': return 'Просрочена';
-        default: return status;
+        default: return { label: statusStr, style: { ...base, background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' } };
     }
 };
 
@@ -188,72 +172,81 @@ export default function BitrixTasks({ lang }: BitrixTasksProps) {
     const t = translations[lang];
     const [tasks, setTasks] = useState<BitrixTask[]>([]);
     const [loading, setLoading] = useState(false);
+    const [syncing, setSyncing] = useState(false);
     const [error, setError] = useState('');
-    const [total, setTotal] = useState(0);
-    const [nextStart, setNextStart] = useState<number | undefined>(0);
-    const [departmentUsers, setDepartmentUsers] = useState<string[]>([]);
-    const [webhookUrl, setWebhookUrl] = useState('');
 
+    // Roles and Restrictions
+    const currentUser = pb.authStore.model;
+    const isSpecialUser = currentUser?.superadmin || currentUser?.is_coordinator;
+    const userBitrixRecordId = currentUser?.bitrix_user; // Link to bitrix_users collection
+    
+    const allowedUserIdsRef = useRef<Set<string>>(new Set());
+    const [userMap, setUserMap] = useState<Map<string, BitrixUser>>(new Map());
+    const [groupMap, setGroupMap] = useState<Map<string, BitrixGroup>>(new Map());
     const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
     const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+    const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
+    const [taskIdFilter, setTaskIdFilter] = useState<string>('');
 
-    const fetchDepartmentUsers = async (url: string) => {
-        try {
-            const response = await fetch(`${url}/user.get?filter[UF_DEPARTMENT]=${IT_DEPARTMENT_ID}&filter[ACTIVE]=true`);
-            const data = await response.json();
-            let ids: string[] = data.result ? data.result.map((u: any) => u.ID) : [];
-            if (!ids.includes(CTO_USER_ID)) ids.push(CTO_USER_ID);
-            setDepartmentUsers(ids);
-            return ids;
-        } catch (e) {
-            return [CTO_USER_ID];
+    // Initialize filters based on user role
+    useEffect(() => {
+        if (!isSpecialUser && userBitrixRecordId) {
+            setSelectedUsers([userBitrixRecordId]);
         }
-    };
+    }, [isSpecialUser, userBitrixRecordId]);
 
-    const fetchAllTasks = async (userIds?: string[], urlOverride?: string): Promise<void> => {
-        const url = urlOverride || webhookUrl;
-        if (!url) return;
-
+    const loadData = async (triggerSync = false) => {
         setLoading(true);
         setError('');
-        const ids = userIds || departmentUsers;
-        if (ids.length === 0) {
-            const freshIds = await fetchDepartmentUsers(url);
-            return fetchAllTasks(freshIds, url);
-        }
-
-        let allTasks: BitrixTask[] = [];
-        let start = 0;
-        let hasMore = true;
-
         try {
-            while (hasMore) {
-                const response = await fetch(`${url}/tasks.task.list`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        filter: { "!REAL_STATUS": 5, "RESPONSIBLE_ID": ids },
-                        select: ["ID", "TITLE", "STATUS", "PRIORITY", "DEADLINE", "CREATED_DATE", "RESPONSIBLE_ID", "GROUP_ID", "COMMENTS_COUNT"],
-                        order: { "ID": "DESC" },
-                        start: start
-                    })
-                });
-                const data: BitrixResponse = await response.json();
-                if (data.result && data.result.tasks) {
-                    const chunk = data.result.tasks.map((t: any) => ({
-                        id: t.id, title: t.title, status: t.status, priority: t.priority,
-                        deadline: t.deadline, createdDate: t.createdDate, responsibleId: t.responsibleId,
-                        responsible: t.responsible, group: t.group, commentsCount: t.commentsCount
-                    }));
-                    allTasks = [...allTasks, ...chunk];
+            if (triggerSync) {
+                setSyncing(true);
+                try {
+                    await pb.send('/api/bitrix/sync-incremental', { method: 'POST' });
+                } catch (syncErr) {
+                    console.warn('Sync failed:', syncErr);
+                } finally {
+                    setSyncing(false);
                 }
-                if (data.next) start = data.next;
-                else hasMore = false;
-                if (allTasks.length > 5000) hasMore = false; 
             }
-            setTasks(allTasks);
-            setTotal(allTasks.length);
+
+            // 1. Fetch IT Dept users and CTO
+            const targetUsers = await pb.collection('bitrix_users').getFullList<BitrixUser>({
+                filter: 'bitrix_id = 7 || departments.bitrix_id ?= 5',
+                expand: 'departments'
+            });
+
+            const uMap = new Map<string, BitrixUser>();
+            const ids = new Set<string>();
+            targetUsers.forEach(u => {
+                uMap.set(u.id, u);
+                ids.add(u.id);
+            });
+            setUserMap(uMap);
+            allowedUserIdsRef.current = ids;
+
+            // 2. Fetch all groups (projects)
+            const groups = await pb.collection('bitrix_groups').getFullList<BitrixGroup>();
+            const gMap = new Map<string, BitrixGroup>();
+            groups.forEach(g => gMap.set(g.id, g));
+            setGroupMap(gMap);
+
+            // 3. Fetch Tasks WITHOUT filters or expand to avoid 400 error and slowness
+            const resultList = await pb.collection('bitrix_tasks_active').getFullList<BitrixTask>({
+                sort: '-created_date',
+            });
+
+            // 4. Filter on client side (safe and fast for 2k records)
+            // Strict enforcement: if not admin/coord, ONLY show personal tasks
+            let filtered = resultList.filter(t => ids.has(t.responsible));
+            if (!isSpecialUser) {
+                // If userBitrixRecordId is null/undefined, this will filter out everything (correct)
+                filtered = filtered.filter(t => t.responsible === userBitrixRecordId);
+            }
+            setTasks(filtered);
+
         } catch (err: any) {
+            console.error(err);
             setError(err.message);
         } finally {
             setLoading(false);
@@ -261,32 +254,65 @@ export default function BitrixTasks({ lang }: BitrixTasksProps) {
     };
 
     useEffect(() => {
-        const init = async () => {
-            const url = await getSetting('bitrix_webhook');
-            if (url) {
-                setWebhookUrl(url);
-                const ids = await fetchDepartmentUsers(url);
-                if (ids.length > 0) fetchAllTasks(ids, url);
-            } else {
-                setError("Bitrix webhook not configured in settings.");
+        loadData();
+
+        pb.collection('bitrix_tasks_active').subscribe('*', async (e) => {
+            if (e.action === 'delete') {
+                setTasks(prev => prev.filter(t => t.id !== e.record.id));
+                return;
             }
+
+            try {
+                if (!allowedUserIdsRef.current.has(e.record.responsible)) return;
+
+                // For updates/creates, we don't need expand anymore because we have groupMap
+                const record = e.record as BitrixTask;
+
+                setTasks(prev => {
+                    const exists = prev.find(t => t.id === record.id);
+                    if (exists) {
+                        return prev.map(t => t.id === record.id ? record : t);
+                    } else {
+                        return [record, ...prev];
+                    }
+                });
+            } catch (err) {
+                console.error(err);
+            }
+        });
+
+        return () => {
+            pb.collection('bitrix_tasks_active').unsubscribe('*');
         };
-        init();
     }, []);
 
     const uniqueUsers = useMemo(() => {
-        const usersMap = new Map<string, BitrixUser>();
-        tasks.forEach(t => t.responsible && usersMap.set(t.responsibleId, t.responsible));
-        return Array.from(usersMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-    }, [tasks]);
+        const users = new Map<string, BitrixUser>();
+        tasks.forEach(t => {
+            const resp = userMap.get(t.responsible);
+            if (resp) users.set(resp.id, resp);
+        });
+        return Array.from(users.values()).sort((a, b) => a.full_name.localeCompare(b.full_name));
+    }, [tasks, userMap]);
+
+    const uniqueGroups = useMemo(() => {
+        const groups = new Map<string, BitrixGroup>();
+        tasks.forEach(t => {
+            const group = groupMap.get(t.group);
+            if (group) groups.set(group.id, group);
+        });
+        return Array.from(groups.values()).sort((a, b) => a.name.localeCompare(b.name));
+    }, [tasks, groupMap]);
 
     const filteredTasks = useMemo(() => {
         return tasks.filter(task => {
-            const matchesUser = selectedUsers.length === 0 || selectedUsers.includes(task.responsibleId);
-            const matchesStatus = selectedStatuses.length === 0 || selectedStatuses.includes(task.status);
-            return matchesUser && matchesStatus;
+            const matchesUser = selectedUsers.length === 0 || selectedUsers.includes(task.responsible);
+            const matchesStatus = selectedStatuses.length === 0 || selectedStatuses.includes(String(task.status));
+            const matchesGroup = selectedGroups.length === 0 || selectedGroups.includes(task.group);
+            const matchesId = !taskIdFilter || String(task.bitrix_id).includes(taskIdFilter);
+            return matchesUser && matchesStatus && matchesGroup && matchesId;
         });
-    }, [tasks, selectedUsers, selectedStatuses]);
+    }, [tasks, selectedUsers, selectedStatuses, selectedGroups, taskIdFilter]);
 
     const formatDate = (d?: string) => d ? new Date(d).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) : '—';
 
@@ -295,7 +321,8 @@ export default function BitrixTasks({ lang }: BitrixTasksProps) {
         label: getStatusConfig(s).label
     }));
 
-    const userOptions = uniqueUsers.map(u => ({ value: u.id, label: u.name }));
+    const userOptions = uniqueUsers.map(u => ({ value: u.id, label: u.full_name }));
+    const groupOptions = uniqueGroups.map(g => ({ value: g.id, label: g.name }));
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
@@ -306,9 +333,48 @@ export default function BitrixTasks({ lang }: BitrixTasksProps) {
                     <span style={{ fontSize: '12px', color: '#94a3b8' }}>{filteredTasks.length} / {tasks.length}</span>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <MultiSelect label="Исполнители" options={userOptions} selected={selectedUsers} onChange={setSelectedUsers} />
+                    <input 
+                        type="text" 
+                        placeholder="Поиск по ID..." 
+                        value={taskIdFilter}
+                        onChange={(e) => setTaskIdFilter(e.target.value)}
+                        style={{
+                            padding: '6px 10px',
+                            fontSize: '13px',
+                            borderRadius: '6px',
+                            border: '1px solid #cbd5e1',
+                            width: '120px',
+                            outline: 'none'
+                        }}
+                    />
+                    <MultiSelect label="Проекты" options={groupOptions} selected={selectedGroups} onChange={setSelectedGroups} />
+                    {isSpecialUser && (
+                        <MultiSelect label="Исполнители" options={userOptions} selected={selectedUsers} onChange={setSelectedUsers} />
+                    )}
                     <MultiSelect label="Статусы" options={statusOptions} selected={selectedStatuses} onChange={setSelectedStatuses} />
-                    <button onClick={() => fetchAllTasks()} style={{ background: 'white', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '4px 10px', cursor: 'pointer', color: '#64748b' }}>↻</button>
+                    <button 
+                        onClick={() => loadData(true)} 
+                        disabled={loading || syncing}
+                        style={{ 
+                            background: syncing ? '#f1f5f9' : 'white', 
+                            border: '1px solid #cbd5e1', 
+                            borderRadius: '4px', 
+                            padding: '4px 10px', 
+                            cursor: (loading || syncing) ? 'not-allowed' : 'pointer', 
+                            color: syncing ? '#3b82f6' : '#64748b',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        <span style={{ 
+                            display: 'inline-block', 
+                            animation: syncing ? 'spin 1s linear infinite' : 'none',
+                            fontSize: '16px'
+                        }}>↻</span>
+                        {syncing && <span style={{ fontSize: '11px', fontWeight: 600 }}>SYNC...</span>}
+                    </button>
                 </div>
             </div>
 
@@ -328,21 +394,28 @@ export default function BitrixTasks({ lang }: BitrixTasksProps) {
                         {filteredTasks.map((task, idx) => {
                             const isOverdue = task.deadline && new Date(task.deadline) < new Date();
                             const statusCfg = getStatusConfig(task.status);
+                            const responsible = userMap.get(task.responsible);
+                            const group = groupMap.get(task.group);
+                            
                             return (
                                 <tr key={task.id} style={{ borderBottom: '1px solid #f1f5f9' }} className="hover-row">
                                     <td style={{ textAlign: 'center', color: '#94a3b8' }}>{idx + 1}</td>
-                                    <td style={{ fontFamily: 'monospace', color: '#64748b' }}>{task.id}{task.priority === '2' && ' 🔥'}</td>
+                                    <td style={{ fontFamily: 'monospace', color: '#64748b' }}>{task.bitrix_id}{task.priority === 2 && ' 🔥'}</td>
                                     <td style={{ padding: '8px 12px' }}>
                                         <div style={{ fontWeight: 500, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={task.title}>{task.title}</div>
-                                        {task.group && <div style={{ fontSize: '10px', color: '#4f46e5', background: '#e0e7ff', display: 'inline-block', padding: '0 4px', borderRadius: '3px' }}>{task.group.name}</div>}
+                                        {group && <div style={{ fontSize: '10px', color: '#4f46e5', background: '#e0e7ff', display: 'inline-block', padding: '0 4px', borderRadius: '3px' }}>{group.name}</div>}
                                     </td>
                                     <td style={{ padding: '8px 12px' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                            {task.responsible?.icon ? <img src={task.responsible.icon} style={{ width: '20px', height: '20px', borderRadius: '50%' }} alt="" /> : <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: '#e2e8f0', fontSize: '9px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{task.responsible?.name?.[0]}</div>}
-                                            <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '12px' }}>{task.responsible?.name}</div>
+                                            <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: '#e2e8f0', fontSize: '9px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                {responsible?.full_name?.[0] || '?'}
+                                            </div>
+                                            <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '12px' }}>{responsible?.full_name || 'Unknown'}</div>
                                         </div>
                                     </td>
-                                    <td style={{ textAlign: 'center' }}><span style={statusCfg.style}>{statusCfg.label}</span></td>
+                                    <td style={{ textAlign: 'center' }}>
+                                        <span style={statusCfg.style}>{statusCfg.label}</span>
+                                    </td>
                                     <td style={{ textAlign: 'center', fontSize: '12px', color: isOverdue ? '#ef4444' : '#64748b', fontWeight: isOverdue ? 700 : 400 }}>{formatDate(task.deadline)}</td>
                                 </tr>
                             );
@@ -350,19 +423,19 @@ export default function BitrixTasks({ lang }: BitrixTasksProps) {
                     </tbody>
                 </table>
                 
-                {loading && (
-                    <div style={{ padding: '20px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
-                        Загрузка задач... (уже загружено {tasks.length})
-                    </div>
-                )}
+                {loading && <div style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>Загрузка...</div>}
                 
                 {!loading && filteredTasks.length === 0 && (
                     <div style={{ padding: '32px', textAlign: 'center', color: '#94a3b8' }}>
-                        {tasks.length > 0 ? "Нет задач с выбранными фильтрами" : (error ? error : "Нет задач")}
+                        {error ? error : "Задач не найдено"}
                     </div>
                 )}
             </div>
-            <style>{`.hover-row:hover { background-color: #f8fafc; } .hover-option:hover { background-color: #f8fafc !important; }`}</style>
+            <style>{`
+                @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+                .hover-row:hover { background-color: #f8fafc; } 
+                .hover-option:hover { background-color: #f8fafc !important; }
+            `}</style>
         </div>
     );
 }

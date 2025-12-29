@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/types"
 )
 
 // SyncManager управляет процессом синхронизации с Bitrix24
@@ -130,7 +129,10 @@ func (s *SyncManager) SyncUsers() error {
 	collection, _ := s.app.FindCollectionByNameOrId("bitrix_users")
 	deptColl, _ := s.app.FindCollectionByNameOrId("bitrix_departments")
 	for {
-		resp, err := s.call("user.get", map[string]interface{}{"start": start})
+		// Use empty filter to get ALL users, including inactive ones
+		resp, err := s.call("user.get", map[string]interface{}{
+			"start": start,
+		})
 		if err != nil {
 			return err
 		}
@@ -145,8 +147,9 @@ func (s *SyncManager) SyncUsers() error {
 			if rec == nil {
 				rec = core.NewRecord(collection)
 			}
+			fullName := fmt.Sprintf("%s %s", u.Name, u.LastName)
 			rec.Set("bitrix_id", u.ID)
-			rec.Set("full_name", fmt.Sprintf("%s %s", u.Name, u.LastName))
+			rec.Set("full_name", fullName)
 
 			// Resolve departments
 			var deptIds []string
@@ -157,7 +160,20 @@ func (s *SyncManager) SyncUsers() error {
 				}
 			}
 			rec.Set("departments", deptIds)
-			s.app.Save(rec)
+			if err := s.app.Save(rec); err == nil {
+				// Try to auto-link with system user (users collection)
+				// Search for a user with the same name
+				sysUser, _ := s.app.FindFirstRecordByFilter("users", "name = {:name}", map[string]interface{}{"name": fullName})
+				if sysUser != nil {
+					// Check if already linked
+					if sysUser.Get("bitrix_user") == "" {
+						sysUser.Set("bitrix_user", rec.Id)
+						if err := s.app.Save(sysUser); err == nil {
+							log.Printf("[Bitrix] Auto-linked system user '%s' to bitrix_id %s", fullName, u.ID)
+						}
+					}
+				}
+			}
 		}
 		if data.Next == 0 {
 			break
@@ -170,72 +186,70 @@ func (s *SyncManager) SyncUsers() error {
 func (s *SyncManager) SyncTasks() error {
 	start := 0
 	collection, _ := s.app.FindCollectionByNameOrId("bitrix_tasks")
+	activeCollection, _ := s.app.FindCollectionByNameOrId("bitrix_tasks_active") // New cache collection
+
 	userMap := make(map[string]string)
-	users, _ := s.app.FindRecordsByFilter("bitrix_users", "id != ''", "", 0, 0, nil)
+	// Fetch ALL users (limit 2000) to ensure map is complete
+	users, _ := s.app.FindRecordsByFilter("bitrix_users", "id != ''", "", 2000, 0, nil)
 	for _, u := range users {
-		userMap[fmt.Sprintf("%d", u.GetInt("bitrix_id"))] = u.Id
+		// Handle bitrix_id as generic value to support both number and string types in DB
+		bxID := u.Get("bitrix_id")
+		userMap[fmt.Sprint(bxID)] = u.Id
 	}
 
 	groupMap := make(map[string]string)
-	groups, _ := s.app.FindRecordsByFilter("bitrix_groups", "id != ''", "", 0, 0, nil)
+	// Fetch ALL groups
+	groups, _ := s.app.FindRecordsByFilter("bitrix_groups", "id != ''", "", 2000, 0, nil)
 	for _, g := range groups {
-		groupMap[fmt.Sprintf("%d", g.GetInt("bitrix_id"))] = g.Id
+		bxID := g.Get("bitrix_id")
+		groupMap[fmt.Sprint(bxID)] = g.Id
 	}
 
+	// 3. Load Cache for speed
+	cache := s.LoadTaskCache()
+
 	for {
-		resp, err := s.call("tasks.task.list", map[string]interface{}{
-			"start":  start,
-			"select": []string{"ID", "TITLE", "DESCRIPTION", "STATUS", "RESPONSIBLE_ID", "CREATED_BY", "GROUP_ID", "DEADLINE"},
-		})
-		if err != nil {
+		        resp, err := s.call("tasks.task.list", map[string]interface{}{
+		            "start":  start,
+		            "filter": map[string]interface{}{">ID": 0},
+		            "order":  map[string]string{"ID": "DESC"}, 
+		            "select": []string{"id", "parentId", "title", "description", "status", "responsibleId", "createdBy", "groupId", "deadline", "changedDate", "statusChangedDate", "priority", "createdDate", "commentsCount", "timeEstimate", "timeSpentInLogs", "startDatePlan", "endDatePlan", "closedDate", "accomplices", "auditors", "tags", "ufCrmTask"},
+		        		})
+		        		if err != nil {
 			return err
 		}
 		var data BxResponse[struct {
 			Tasks []BxTask `json:"tasks"`
 		}]
 		json.Unmarshal(resp, &data)
+		if start == 0 {
+			log.Printf("[Bitrix] Total tasks reported by API: %d", data.Total)
+		}
+
 		if len(data.Result.Tasks) == 0 {
 			break
 		}
 
 		for _, t := range data.Result.Tasks {
-			rec, _ := s.app.FindFirstRecordByFilter(collection.Id, "bitrix_id={:id}", map[string]interface{}{"id": t.ID})
-			if rec == nil {
-				rec = core.NewRecord(collection)
-			}
-
-			rec.Set("bitrix_id", t.ID)
-			rec.Set("title", t.Title)
-
-			desc := t.Description
-			if len(desc) > 5000 {
-				desc = desc[:5000]
-			}
-			rec.Set("description", desc)
-			rec.Set("status", t.Status)
-
-			if pbId, ok := userMap[t.ResponsibleId]; ok {
-				rec.Set("responsible", pbId)
-			}
-			if pbId, ok := userMap[t.CreatedBy]; ok {
-				rec.Set("created_by", pbId)
-			}
-			if pbId, ok := groupMap[t.GroupId]; ok {
-				rec.Set("group", pbId)
-			}
-
-			if t.Deadline != "" {
-				if dt, err := types.ParseDateTime(t.Deadline); err == nil {
-					rec.Set("deadline", dt)
-				}
-			}
-			s.app.Save(rec)
+			s.SaveTaskOptimized(t, userMap, groupMap, collection, activeCollection, cache)
 		}
+		
+		processed := start + len(data.Result.Tasks)
+		if processed % 1000 == 0 || data.Next == 0 {
+			firstID := "unknown"
+			lastID := "unknown"
+			if len(data.Result.Tasks) > 0 {
+				firstID = data.Result.Tasks[0].ID
+				lastID = data.Result.Tasks[len(data.Result.Tasks)-1].ID
+			}
+			log.Printf("[Bitrix] Sync progress: %d / %d tasks (Batch IDs: %s to %s)", processed, data.Total, firstID, lastID)
+		}
+
 		if data.Next == 0 {
 			break
 		}
 		start = data.Next
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond) // Reduced sleep
 	}
 	return nil
 }

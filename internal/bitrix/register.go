@@ -25,6 +25,16 @@ func Register(app core.App) error {
 			go sync.SyncAll()
 			return e.String(200, "Background sync started")
 		})
+
+		e.Router.POST("/api/bitrix/sync-incremental", func(e *core.RequestEvent) error {
+			sync := NewSyncManager(app)
+			log.Println("[Bitrix] Manual incremental sync requested from UI...")
+			if err := sync.SyncUpdates(); err != nil {
+				return e.InternalServerError("Sync failed", err)
+			}
+			return e.String(200, "Sync finished")
+		})
+
 		return e.Next()
 	})
 
@@ -41,6 +51,15 @@ func Register(app core.App) error {
 			if count == 0 {
 				log.Println("[Bitrix] bitrix_tasks table is empty. Starting initial sync...")
 				sync.SyncAll()
+			}
+
+			// Запускаем периодическую синхронизацию (каждые 5 минут)
+			ticker := time.NewTicker(5 * time.Minute)
+			for range ticker.C {
+				log.Println("[Bitrix] Running scheduled incremental sync...")
+				if err := NewSyncManager(app).SyncUpdates(); err != nil {
+					log.Printf("[Bitrix] Sync error: %v", err)
+				}
 			}
 		}()
 		return e.Next()
