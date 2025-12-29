@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import pb, { getActualTasks, clearRankingCache } from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
-import { getColor } from '../lib/colors';
+import { StatusBadge } from './ui/StatusBadge';
+import { MultiSelect } from './ui/MultiSelect';
 
 interface TaskField {
     key: string;
@@ -50,9 +51,6 @@ export default function TaskList({ lang }: TaskListProps) {
     // Dynamic filters for each field: key -> value
     const [filters, setFilters] = useState<Record<string, string>>({});
     
-    // State to manage open/close of multi-select dropdowns
-    const [openDropdowns, setOpenDropdowns] = useState<Record<string, boolean>>({});
-
     // --- Admin/Coordinator Logic ---
     const [isAdminOrCoordinator, setIsAdminOrCoordinator] = useState(false);
     const [users, setUsers] = useState<User[]>([]);
@@ -255,36 +253,8 @@ export default function TaskList({ lang }: TaskListProps) {
         setFilters(prev => ({ ...prev, [key]: value }));
     };
 
-    const toggleStatusFilter = (key: string, slug: string) => {
-        setFilters(prev => {
-            const currentStr = prev[key] || '';
-            let current = currentStr ? currentStr.split(',') : [];
-            
-            if (current.includes(slug)) {
-                current = current.filter(s => s !== slug);
-            } else {
-                current.push(slug);
-            }
-            
-            const newVal = current.join(',');
-            // If empty, remove key to keep state clean
-            if (!newVal) {
-                const { [key]: _, ...rest } = prev;
-                return rest;
-            }
-            return { ...prev, [key]: newVal };
-        });
-    };
-
     const clearFilters = () => {
         setFilters({});
-        setOpenDropdowns({});
-    };
-
-    const toggleDropdown = (key: string) => {
-        setOpenDropdowns(prev => {
-            return { ...prev, [key]: !prev[key] };
-        });
     };
 
     // Filter tasks client-side based on per-field filters
@@ -418,31 +388,7 @@ export default function TaskList({ lang }: TaskListProps) {
              const statusObj = statuses.find(s => s.slug.toLowerCase() === valStr || s.title.toLowerCase() === valStr);
              
              if (statusObj) {
-                 const bgColor = getColor(statusObj.color, 100); 
-                 const textColor = getColor(statusObj.color, 700);
-                 const borderColor = getColor(statusObj.color, 200);
-                 
-                 return (
-                     <span style={{
-                         display: 'inline-flex',
-                         alignItems: 'center',
-                         justifyContent: 'center',
-                         backgroundColor: bgColor,
-                         color: textColor,
-                         border: `1px solid ${borderColor}`,
-                         padding: '4px 10px',
-                         minHeight: '24px',
-                         borderRadius: '12px',
-                         fontWeight: 600,
-                         fontSize: '0.75rem',
-                         whiteSpace: 'normal',
-                         textAlign: 'center',
-                         lineHeight: '1.2',
-                         boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)'
-                     }}>
-                         {statusObj.title}
-                     </span>
-                 );
+                 return <StatusBadge status={statusObj.slug} />;
              }
              return <span style={{color: '#64748b'}}>{value}</span>;
         }
@@ -502,14 +448,6 @@ export default function TaskList({ lang }: TaskListProps) {
 
     return (
         <div className="task-list-container">
-            {/* Click-outside backdrop for dropdowns */}
-            {Object.values(openDropdowns).some(Boolean) && (
-                <div 
-                    style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 40}} 
-                    onClick={() => setOpenDropdowns({})}
-                />
-            )}
-
             {/* Filters Container */}
             <div className="task-filters-wrapper">
                 
@@ -646,81 +584,14 @@ export default function TaskList({ lang }: TaskListProps) {
                             <div key={field.key} className="form-group-inline" style={{flexGrow: 1, minWidth: field.key === 'status' || field.type === 'select' ? '200px' : '150px', maxWidth: '200px'}}>
                             <label className="form-label" style={{fontSize: '0.8rem', marginBottom: '0.25rem'}}>{field.title}</label>
                             {field.type === 'select' || field.key === 'status' ? (
-                                <div style={{position: 'relative'}}>
-                                <div 
-                                    className="input"
-                                    onClick={() => toggleDropdown(field.key)}
-                                    style={{
-                                        padding: '0.4rem 0.6rem', 
-                                        cursor: 'pointer', 
-                                        display: 'flex', 
-                                        alignItems: 'center', 
-                                        justifyContent: 'space-between',
-                                        background: 'white',
-                                        minHeight: '34px'
-                                    }}
-                                >
-                                    <span style={{whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.85rem', marginRight: '0.5rem'}}>
-                                        {filters[field.key] 
-                                            ? (() => {
-                                                const selectedSlugs = filters[field.key].split(',');
-                                                const selectedTitles = selectedSlugs.map(slug => statuses.find(s => s.slug === slug)?.title || slug);
-                                                if (selectedTitles.length > 2) return `${selectedTitles.length} selected`;
-                                                return selectedTitles.join(', ');
-                                            })()
-                                            : (t.all || 'All')
-                                        }
-                                    </span>
-                                    <span style={{fontSize: '0.7rem', color: '#94a3b8'}}>▼</span>
-                                </div>
-
-                                {openDropdowns[field.key] && (
-                                    <div style={{
-                                        position: 'absolute', 
-                                        top: 'calc(100% + 4px)', 
-                                        left: 0, 
-                                        width: '100%', 
-                                        minWidth: '200px',
-                                        backgroundColor: '#ffffff', 
-                                        border: '1px solid #cbd5e1', 
-                                        borderRadius: '8px', 
-                                        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)', 
-                                        zIndex: 105, 
-                                        padding: '0.5rem', 
-                                        maxHeight: '300px', 
-                                        overflowY: 'auto'
-                                    }}>
-                                        {statuses.map(s => {
-                                            const isActive = (filters[field.key] || '').split(',').includes(s.slug);
-                                            return (
-                                                <label 
-                                                    key={s.slug} 
-                                                    style={{
-                                                        display: 'flex', 
-                                                        alignItems: 'center', 
-                                                        gap: '0.6rem', 
-                                                        padding: '0.4rem', 
-                                                        cursor: 'pointer',
-                                                        borderRadius: '4px',
-                                                        transition: 'background 0.1s'
-                                                    }}
-                                                    onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
-                                                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                                                >
-                                                    <input 
-                                                        type="checkbox" 
-                                                        checked={isActive} 
-                                                        onChange={() => toggleStatusFilter(field.key, s.slug)} 
-                                                        style={{cursor: 'pointer', width: '16px', height: '16px'}}
-                                                    />
-                                                    <span style={{fontSize: '0.85rem', color: '#334155'}}>{s.title}</span>
-                                                </label>
-                                            );
-                                        })}
-                                    </div>
-                                )}
-                            </div>
-                        ) : (
+                                <MultiSelect 
+                                    label={field.title}
+                                    placeholder={t.all || 'All'}
+                                    options={statuses.map(s => ({ value: s.slug, label: s.title }))}
+                                    selected={(filters[field.key] || '').split(',').filter(Boolean)}
+                                    onChange={(newValues) => handleFilterChange(field.key, newValues.join(','))}
+                                />
+                            ) : (
                             <input 
                                 className="input"
                                 style={{padding: '0.4rem'}}

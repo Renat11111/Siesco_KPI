@@ -12,6 +12,7 @@ const getStatusConfig = (status: number | string) => {
     };
 
     switch (statusStr) {
+        // Bitrix Numeric IDs
         case '1': return { label: 'Новая', style: { ...base, background: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd' } };
         case '2': return { label: 'Ждет выполнения', style: { ...base, background: '#f1f5f9', color: '#475569', border: '1px solid #e2e8f0' } };
         case '3': return { label: 'Выполняется', style: { ...base, background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' } };
@@ -20,6 +21,22 @@ const getStatusConfig = (status: number | string) => {
         case '6': return { label: 'Отложена', style: { ...base, background: '#fff7ed', color: '#9a3412', border: '1px solid #ffedd5' } };
         case '7': return { label: 'Возвращена', style: { ...base, background: '#fee2e2', color: '#dc2626', border: '1px solid #fecaca' } };
         case '-1': return { label: 'Просрочена', style: { ...base, background: '#7f1d1d', color: '#ffffff', border: '1px solid #991b1b' } };
+        
+        // Text Slugs (Siesco KPI)
+        case 'new': return { label: 'Новая', style: { ...base, background: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd' } };
+        case 'waiting': return { label: 'Ждет выполнения', style: { ...base, background: '#f1f5f9', color: '#475569', border: '1px solid #e2e8f0' } };
+        case 'in_progress': 
+        case 'in_progress_return':
+            return { label: statusStr === 'in_progress_return' ? 'Выполняется (возврат)' : 'Выполняется', style: { ...base, background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' } };
+        case 'control': return { label: 'Ожидает контроля', style: { ...base, background: '#f3e8ff', color: '#7e22ce', border: '1px solid #d8b4fe' } };
+        case 'completed': 
+        case 'completed_return':
+        case 'completed_appeal':
+            return { label: statusStr === 'completed' ? 'Завершена' : (statusStr === 'completed_appeal' ? 'Завершена (апелляция)' : 'Завершена (возврат)'), style: { ...base, background: '#dcfce7', color: '#15803d', border: '1px solid #bbf7d0' } };
+        case 'deferred': return { label: 'Отложена', style: { ...base, background: '#fff7ed', color: '#9a3412', border: '1px solid #ffedd5' } };
+        case 'returned': return { label: 'Возвращена', style: { ...base, background: '#fee2e2', color: '#dc2626', border: '1px solid #fecaca' } };
+        case 'overdue': return { label: 'Просрочена', style: { ...base, background: '#7f1d1d', color: '#ffffff', border: '1px solid #991b1b' } };
+
         default: return { label: statusStr, style: { ...base, background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' } };
     }
 };
