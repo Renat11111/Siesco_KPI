@@ -63,6 +63,11 @@ const getStatusConfig = (status: number | string) => {
     }
 };
 
+const StatusBadge = ({ status }: { status: number | string }) => {
+    const config = getStatusConfig(status);
+    return <span style={config.style}>{config.label}</span>;
+};
+
 // --- MultiSelect Dropdown Component ---
 interface MultiSelectProps {
     label: string;
@@ -393,7 +398,6 @@ export default function BitrixTasks({ lang }: BitrixTasksProps) {
                     <tbody>
                         {filteredTasks.map((task, idx) => {
                             const isOverdue = task.deadline && new Date(task.deadline) < new Date();
-                            const statusCfg = getStatusConfig(task.status);
                             const responsible = userMap.get(task.responsible);
                             const group = groupMap.get(task.group);
                             
@@ -414,7 +418,7 @@ export default function BitrixTasks({ lang }: BitrixTasksProps) {
                                         </div>
                                     </td>
                                     <td style={{ textAlign: 'center' }}>
-                                        <span style={statusCfg.style}>{statusCfg.label}</span>
+                                        <StatusBadge status={task.status} />
                                     </td>
                                     <td style={{ textAlign: 'center', fontSize: '12px', color: isOverdue ? '#ef4444' : '#64748b', fontWeight: isOverdue ? 700 : 400 }}>{formatDate(task.deadline)}</td>
                                 </tr>
