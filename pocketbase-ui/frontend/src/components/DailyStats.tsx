@@ -1,104 +1,22 @@
-import { useEffect, useState } from 'react';
-import pb from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
-import { getColor } from '../lib/colors';
 import { Card } from './ui/Card';
+import { useDailyStats } from '../hooks/useDailyStats';
 
 interface DailyStatsProps {
     lang: Language;
     refreshTrigger: number; 
 }
 
-interface StatusDefinition {
-    title: string;
-    color: string;
-}
-
 export default function DailyStats({ lang, refreshTrigger }: DailyStatsProps) {
     const t = translations[lang];
-    const [stats, setStats] = useState<Record<string, number>>({});
-    const [totalHoursSpent, setTotalHoursSpent] = useState<number>(0); 
-    const [loading, setLoading] = useState(false);
-    const [statusList, setStatusList] = useState<StatusDefinition[]>([]);
-
-    useEffect(() => {
-        fetchDailyStats();
-
-        let unsubTasks: () => void;
-        let unsubGlobal: () => void;
-
-        const setup = async () => {
-            const currentUser = pb.authStore.record;
-            // 1. Smart Realtime: update only if the task belongs to ME
-            unsubTasks = await pb.collection('tasks').subscribe('*', (e) => {
-                if (currentUser && e.record && e.record.user === currentUser.id) {
-                    fetchDailyStats();
-                }
-            });
-
-            // 2. GLOBAL Realtime: update on any ranking update (e.g. admin upload)
-            unsubGlobal = await pb.collection('ranking_updates').subscribe('*', () => {
-                fetchDailyStats();
-            });
-        };
-
-        setup();
-
-        return () => {
-            if (unsubTasks) unsubTasks();
-            if (unsubGlobal) unsubGlobal();
-        };
-    }, [refreshTrigger, pb.authStore.record?.id]);
-
-    const fetchDailyStats = async () => {
-        const user = pb.authStore.record;
-        if (!user) return;
-
-        setLoading(true);
-        try {
-            const statusRecords = await pb.collection('statuses').getFullList({ requestKey: null });
-            const definitions: StatusDefinition[] = statusRecords.map(r => ({
-                title: r.title,
-                color: getColor(r.color)
-            }));
-            setStatusList(definitions);
-
-            const now = new Date();
-            const y = now.getFullYear();
-            const m = String(now.getMonth() + 1).padStart(2, '0');
-            const d = String(now.getDate()).padStart(2, '0');
-            const todayStr = `${y}-${m}-${d}`;
-
-            const records = await pb.collection('tasks').getFullList({
-                filter: `user = "${user.id}" && file_date >= "${todayStr} 00:00:00" && file_date <= "${todayStr} 23:59:59"`,
-                requestKey: null
-            });
-
-            const counts: Record<string, number> = {};
-            definitions.forEach(s => counts[s.title] = 0);
-            let hoursSum = 0;
-
-            records.forEach(record => {
-                if (Array.isArray(record.data)) {
-                    record.data.forEach((task: any) => {
-                        const status = task.status?.trim();
-                        if (definitions.some(d => d.title === status)) {
-                            counts[status] = (counts[status] || 0) + 1;
-                        }
-                        const hours = Number(task.time_spent);
-                        if (!isNaN(hours)) hoursSum += hours;
-                    });
-                }
-            });
-
-            setStats(counts);
-            setTotalHoursSpent(hoursSum);
-        } catch (err) {
-            console.error(err);
-        } finally {
-            setLoading(false);
-        }
-    };
+    
+    const { 
+        stats, 
+        totalHoursSpent, 
+        loading, 
+        statusList, 
+        totalCount 
+    } = useDailyStats(refreshTrigger);
 
     const statsTitle = (
         <>
@@ -142,7 +60,7 @@ export default function DailyStats({ lang, refreshTrigger }: DailyStatsProps) {
                                 ))}
                                 <tr style={{borderTop: '2px solid var(--border)'}}>
                                     <td style={{padding: '3px 0', color: 'var(--text-main)', fontWeight: 700, paddingTop: '4px'}}>{t.statsTotal}</td>
-                                    <td style={{padding: '3px 0', color: 'var(--text-main)', textAlign: 'right', fontWeight: 700, fontSize: '1.1rem', paddingTop: '4px'}}>{statusList.reduce((acc, s) => acc + (stats[s.title] || 0), 0)}</td>
+                                    <td style={{padding: '3px 0', color: 'var(--text-main)', textAlign: 'right', fontWeight: 700, fontSize: '1.1rem', paddingTop: '4px'}}>{totalCount}</td>
                                 </tr>
                                 <tr style={{borderTop: '1px solid var(--border)'}}>
                                     <td style={{padding: '3px 0', color: 'var(--text-main)', fontWeight: 700, paddingTop: '4px'}}>{t.statsTotalHours}</td>

@@ -216,17 +216,33 @@ func HandleUpdateTaskTime(pbApp *pocketbase.PocketBase, context *app.AppContext,
 
 	taskList, _ := utils.ParseTaskData(record.GetString(app.FieldData))
 	found := false
-	for i, t := range taskList {
-		if strings.TrimSpace(fmt.Sprintf("%v", t["task_number"])) == data.TaskNumber {
-			found = true
-			t["time_spent"] = data.NewTime
-			t["is_edited"] = true
-			taskList[i] = t
-			break
-		}
-	}
-
-	if found {
+	        for i, t := range taskList {
+	            if strings.TrimSpace(fmt.Sprintf("%v", t["task_number"])) == data.TaskNumber {
+	                found = true
+	                
+	                // Получаем текущие значения
+	                currTime := 0.0
+	                switch v := t["time_spent"].(type) {
+	                case float64: currTime = v
+	                case int: currTime = float64(v)
+	                }
+	    
+	                // Если оригинал еще не сохранен (даже если флаг редактирования стоит)
+	                orig, exists := t["original_time_spent"]
+	                if !exists || orig == nil || orig == 0.0 {
+	                    t["original_time_spent"] = t["time_spent"]
+	                }
+	    
+	                t["time_spent"] = data.NewTime
+	                t["is_edited"] = true
+	                taskList[i] = t
+	                
+	                log.Printf("[TaskEdit] Task %s: Original=%.2f, New=%.2f", data.TaskNumber, currTime, data.NewTime)
+	                break
+	            }
+	        }
+	    
+		if found {
 		newJson, _ := json.Marshal(taskList)
 		record.Set(app.FieldData, string(newJson))
 		pbApp.Save(record)

@@ -3,33 +3,8 @@ import pb, { getActualTasks, clearRankingCache } from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
 import { StatusBadge } from './ui/StatusBadge';
 import { MultiSelect } from './ui/MultiSelect';
-
-interface TaskField {
-    key: string;
-    title: string;
-    type: string;
-    width: string;
-    filterable: boolean;
-    order: number; // Added order
-}
-
-interface Status {
-    title: string;
-    slug: string;
-    color: string;
-}
-
-interface User {
-    id: string;
-    name: string;
-    email: string;
-}
-
-// Use a flexible record for tasks since fields are dynamic
-type Task = Record<string, any> & {
-    source_file_date?: string;
-    source_file_id?: string;
-};
+import { Task, TaskField, Status, User } from '../types/tasks';
+import { useTaskListConfig, useTaskListData } from '../hooks/useTaskList';
 
 interface TaskListProps {
     lang: Language;
@@ -37,13 +12,16 @@ interface TaskListProps {
 
 export default function TaskList({ lang }: TaskListProps) {
     const t = translations[lang];
-
-    const [tasks, setTasks] = useState<Task[]>([]);
-    const [fields, setFields] = useState<TaskField[]>([]);
-    const [statuses, setStatuses] = useState<Status[]>([]);
+    const { fields, statuses } = useTaskListConfig();
+    const [selectedUserId, setSelectedUserId] = useState<string>(pb.authStore.record?.id || '');
     
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
+    const { 
+        tasks, 
+        loading, 
+        error, 
+        fetchTasks, 
+        updateTaskTime 
+    } = useTaskListData(lang, selectedUserId);
 
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
@@ -54,7 +32,6 @@ export default function TaskList({ lang }: TaskListProps) {
     // --- Admin/Coordinator Logic ---
     const [isAdminOrCoordinator, setIsAdminOrCoordinator] = useState(false);
     const [users, setUsers] = useState<User[]>([]);
-    const [selectedUserId, setSelectedUserId] = useState<string>('');
     const [showUnfinishedOnly, setShowUnfinishedOnly] = useState(false);
     const [showGroupedCompleted, setShowGroupedCompleted] = useState(false);
 
@@ -79,7 +56,6 @@ export default function TaskList({ lang }: TaskListProps) {
         };
 
         checkUserRole();
-        loadConfig();
         
         const now = new Date();
         const start = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -98,155 +74,49 @@ export default function TaskList({ lang }: TaskListProps) {
         setStartDate(initialStartDate);
         setEndDate(initialEndDate);
         
-        fetchTasks(initialStartDate, initialEndDate, pb.authStore.record?.id, false, false); // Default to history mode
-    }, []);
+        const target = pb.authStore.record?.id;
+        if (target) {
+            fetchTasks({ start: initialStartDate, end: initialEndDate, userId: target, unfinishedMode: false, groupedCompletedMode: false });
+        }
+    }, [fetchTasks]);
 
     // Realtime Subscription
     useEffect(() => {
         const setup = async () => {
             const targetUser = selectedUserId || pb.authStore.record?.id;
+            const refresh = () => fetchTasks({ start: startDate, end: endDate, userId: selectedUserId, unfinishedMode: showUnfinishedOnly, groupedCompletedMode: showGroupedCompleted });
             
-            // Подписка на задачи
             await pb.collection('tasks').subscribe('*', (e) => {
-                if (targetUser && e.record && e.record.user === targetUser) {
-                    fetchTasks(startDate, endDate, selectedUserId, showUnfinishedOnly, showGroupedCompleted);
-                }
+                if (targetUser && e.record && e.record.user === targetUser) refresh();
             });
 
-            // Подписка на глобальный сигнал
-            await pb.collection('ranking_updates').subscribe('*', () => {
-                fetchTasks(startDate, endDate, selectedUserId, showUnfinishedOnly, showGroupedCompleted);
-            });
+            await pb.collection('ranking_updates').subscribe('*', () => refresh());
         };
-
         setup();
-
-        return () => {
-            // Оставляем подписки живыми для стабильности в Wails
-        };
-    }, [selectedUserId, startDate, endDate, showUnfinishedOnly, showGroupedCompleted]);
-
-    const loadConfig = async () => {
-        try {
-            const fieldsRes = await pb.collection('task_fields').getFullList({ sort: 'order' });
-            // Map the response to our interface
-            const mappedFields: TaskField[] = fieldsRes.map((r: any) => ({
-                key: r.key,
-                title: r.title,
-                type: r.type,
-                width: r.width || 'auto',
-                filterable: r.filterable ?? true,
-                order: r.order || 0
-            }));
-
-            // Sort fields by order defined in config/DB
-            mappedFields.sort((a, b) => a.order - b.order);
-
-            setFields(mappedFields);
-
-            const statusesRes = await pb.collection('statuses').getFullList();
-            const mappedStatuses: Status[] = statusesRes.map((r: any) => ({
-                title: r.title,
-                slug: r.slug,
-                color: r.color
-            }));
-            setStatuses(mappedStatuses);
-
-        } catch (e) {
-            console.error("Failed to load config", e);
-        }
-    };
-
-    const fetchTasks = async (start = startDate, end = endDate, userIdOverride?: string, unfinishedMode = showUnfinishedOnly, groupedCompletedMode = showGroupedCompleted) => {
-        if (!start || !end) return;
-        
-        const targetUserId = userIdOverride || selectedUserId || pb.authStore.record?.id;
-        if (!targetUserId) return;
-
-        setLoading(true);
-        setError('');
-        setTasks([]);
-
-        try {
-            // Формат даты для бэкенда
-            const filterStartDate = `${start} 00:00:00`;
-            const filterEndDate = `${end} 23:59:59`;
-
-            if (unfinishedMode) {
-                // Use Custom API for Actual Unfinished Tasks
-                const actualTasks = await getActualTasks(filterStartDate, filterEndDate, targetUserId);
-                setTasks(actualTasks);
-            } else if (groupedCompletedMode) {
-                // Use Custom API for Grouped Completed Tasks
-                const groupedTasks = await pb.send('/api/kpi/completed-tasks-grouped', {
-                    params: {
-                        start: filterStartDate,
-                        end: filterEndDate,
-                        user: targetUserId
-                    }
-                });
-                setTasks(groupedTasks);
-            } else {
-                // Use Standard API for History
-                const filter = `user = "${targetUserId}" && file_date >= "${filterStartDate}" && file_date <= "${filterEndDate}"`;
-
-                const records = await pb.collection('tasks').getFullList({
-                    filter: filter,
-                    sort: '-file_date',
-                    requestKey: null,
-                });
-
-                let aggregatedTasks: Task[] = [];
-
-                records.forEach(record => {
-                    const tasksInFile = record.data; 
-                    
-                    if (Array.isArray(tasksInFile)) {
-                        tasksInFile.forEach((t: any) => {
-                            const task: Task = {
-                                ...t,
-                                source_file_date: record.file_date,
-                                source_file_id: record.id
-                            };
-                            aggregatedTasks.push(task);
-                        });
-                    }
-                });
-
-                setTasks(aggregatedTasks);
-            }
-
-        } catch (err: any) {
-            console.error("Error fetching tasks:", err);
-            setError(err.message || t.genericError);
-        } finally {
-            setLoading(false);
-        }
-    };
+    }, [selectedUserId, startDate, endDate, showUnfinishedOnly, showGroupedCompleted, fetchTasks]);
 
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
-        fetchTasks(startDate, endDate);
+        fetchTasks({ start: startDate, end: endDate, userId: selectedUserId, unfinishedMode: showUnfinishedOnly, groupedCompletedMode: showGroupedCompleted });
     };
 
     const toggleUnfinishedMode = () => {
-        const newUnfinished = !showUnfinishedOnly;
-        setShowUnfinishedOnly(newUnfinished);
-        if (newUnfinished) setShowGroupedCompleted(false); // Mutual exclusion
-        fetchTasks(startDate, endDate, undefined, newUnfinished, false);
+        const val = !showUnfinishedOnly;
+        setShowUnfinishedOnly(val);
+        if (val) setShowGroupedCompleted(false);
+        fetchTasks({ start: startDate, end: endDate, userId: selectedUserId, unfinishedMode: val, groupedCompletedMode: false });
     };
 
     const toggleGroupedCompletedMode = () => {
-        const newGrouped = !showGroupedCompleted;
-        setShowGroupedCompleted(newGrouped);
-        if (newGrouped) setShowUnfinishedOnly(false); // Mutual exclusion
-        fetchTasks(startDate, endDate, undefined, false, newGrouped);
+        const val = !showGroupedCompleted;
+        setShowGroupedCompleted(val);
+        if (val) setShowUnfinishedOnly(false);
+        fetchTasks({ start: startDate, end: endDate, userId: selectedUserId, unfinishedMode: false, groupedCompletedMode: val });
     };
 
-    // Handler for user dropdown change
     const handleUserChange = (newUserId: string) => {
         setSelectedUserId(newUserId);
-        fetchTasks(startDate, endDate, newUserId);
+        fetchTasks({ start: startDate, end: endDate, userId: newUserId, unfinishedMode: showUnfinishedOnly, groupedCompletedMode: showGroupedCompleted });
     };
 
     const handleFilterChange = (key: string, value: string) => {
@@ -259,7 +129,7 @@ export default function TaskList({ lang }: TaskListProps) {
 
     // Filter tasks client-side based on per-field filters
     const filteredTasks = useMemo(() => {
-        return tasks.filter(task => {
+        return tasks.filter((task: Task) => {
             return fields.every(field => {
                 const filterVal = filters[field.key];
                 if (!filterVal) return true; // No filter set for this field
@@ -312,7 +182,7 @@ export default function TaskList({ lang }: TaskListProps) {
             }
         });
 
-        filteredTasks.forEach(task => {
+        filteredTasks.forEach((task: Task) => {
             fields.forEach(f => {
                 if (f.type === 'number') {
                     const val = parseFloat(task[f.key]);
@@ -325,39 +195,20 @@ export default function TaskList({ lang }: TaskListProps) {
         return acc;
     }, [filteredTasks, fields]);
 
-    const handleEditTime = async (task: Task, currentVal: number) => {
+    const handleEditTimeWrapper = async (task: Task, currentVal: number) => {
         const newValStr = window.prompt(lang === 'ru' ? "Введите новое значение времени (часы):" : "Enter new time value (hours):", String(currentVal));
         if (newValStr === null) return; 
-        
         const newVal = parseFloat(newValStr.replace(',', '.')); 
         if (isNaN(newVal)) {
             alert(translations[lang].invalidValue);
             return;
         }
-
         if (newVal === currentVal) return;
 
-        // If in grouped mode, source_file_id might be from the latest file, which is correct for updating the latest state.
-        if (!task.source_file_id || !task.task_number) {
-            alert("Error: Missing task ID context");
-            return;
-        }
-
         try {
-            await pb.send('/api/kpi/update-task-time', {
-                method: 'POST',
-                body: {
-                    record_id: task.source_file_id,
-                    task_number: task.task_number,
-                    new_time: newVal
-                }
-            });
-            // Clear cache so Analytics tab recalculates immediately
-            clearRankingCache();
-            // Refresh with current params
-            fetchTasks();
+            await updateTaskTime(task, newVal);
+            fetchTasks({ start: startDate, end: endDate, userId: selectedUserId, unfinishedMode: showUnfinishedOnly, groupedCompletedMode: showGroupedCompleted });
         } catch (e: any) {
-            console.error(e);
             alert(translations[lang].genericError + ": " + e.message);
         }
     };
@@ -399,7 +250,7 @@ export default function TaskList({ lang }: TaskListProps) {
                     <span>{typeof value === 'number' ? value.toFixed(2) : value}</span>
                     {isAdminOrCoordinator && !showGroupedCompleted && (
                         <button 
-                            onClick={() => handleEditTime(task, Number(value))}
+                            onClick={() => handleEditTimeWrapper(task, Number(value))}
                             style={{
                                 border: 'none',
                                 background: 'transparent',
@@ -434,7 +285,18 @@ export default function TaskList({ lang }: TaskListProps) {
         }
 
         if (field.type === 'number') {
-            return <div className="text-right">{typeof value === 'number' ? value.toFixed(2) : value}</div>;
+            // Если значение реально пустое
+            if (value === undefined || value === null || value === '') {
+                return <div className="text-right text-gray-300">-</div>;
+            }
+
+            // Специальная логика для оригинала: если не редактировалось - всегда прочерк
+            if (field.key === 'original_time_spent' && !task.is_edited) {
+                return <div className="text-right text-gray-300">-</div>;
+            }
+
+            const numVal = Number(value);
+            return <div className="text-right">{!isNaN(numVal) ? numVal.toFixed(2) : '-'}</div>;
         }
 
         if (field.type === 'text') {
@@ -635,7 +497,7 @@ export default function TaskList({ lang }: TaskListProps) {
                             </tr>
                         </thead>
                         <tbody>
-                            {filteredTasks.map((task, index) => (
+                            {filteredTasks.map((task: Task, index: number) => (
                                 <tr key={index}>
                                     <td style={{textAlign: 'center', color: '#94a3b8', fontSize: '0.8rem'}}>{index + 1}</td>
                                     {fields.map(field => (

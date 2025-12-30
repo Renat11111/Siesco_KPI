@@ -1,45 +1,13 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Language, translations } from '../lib/translations';
-import pb from '../lib/pocketbase';
-import { RecordModel } from 'pocketbase';
 import { StatusBadge, getStatusConfig } from './ui/StatusBadge';
 import { UserBadge } from './ui/UserBadge';
 import { MultiSelect } from './ui/MultiSelect';
+import { useBitrixData } from '../hooks/useBitrixData';
+import { BitrixUser, BitrixGroup } from '../types/bitrix';
 
 interface BitrixTasksProps {
     lang: Language;
-}
-
-interface BitrixUser extends RecordModel {
-    bitrix_id: number;
-    full_name: string;
-}
-
-interface BitrixDepartment extends RecordModel {
-    bitrix_id: number;
-    name: string;
-}
-
-interface BitrixGroup extends RecordModel {
-    bitrix_id: number;
-    name: string;
-}
-
-interface BitrixTask extends RecordModel {
-    bitrix_id: number;
-    title: string;
-    description: string;
-    status: number;
-    priority: number;
-    deadline: string;
-    created_date: string;
-    responsible: string; 
-    group: string;
-    comments_count: number;
-    expand?: {
-        responsible?: BitrixUser;
-        group?: BitrixGroup;
-    };
 }
 
 // --- MultiSelect Dropdown Component ---
@@ -53,19 +21,20 @@ const baseThStyle: React.CSSProperties = {
 
 export default function BitrixTasks({ lang }: BitrixTasksProps) {
     const t = translations[lang];
-    const [tasks, setTasks] = useState<BitrixTask[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [syncing, setSyncing] = useState(false);
-    const [error, setError] = useState('');
-
-    // Roles and Restrictions
-    const currentUser = pb.authStore.model;
-    const isSpecialUser = currentUser?.superadmin || currentUser?.is_coordinator;
-    const userBitrixRecordId = currentUser?.bitrix_user; // Link to bitrix_users collection
     
-    const allowedUserIdsRef = useRef<Set<string>>(new Set());
-    const [userMap, setUserMap] = useState<Map<string, BitrixUser>>(new Map());
-    const [groupMap, setGroupMap] = useState<Map<string, BitrixGroup>>(new Map());
+    // Use the custom hook for all data logic
+    const { 
+        tasks, 
+        userMap, 
+        groupMap, 
+        loading, 
+        syncing, 
+        error, 
+        refresh, 
+        isSpecialUser, 
+        userBitrixRecordId 
+    } = useBitrixData();
+
     const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
     const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
     const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
@@ -77,97 +46,6 @@ export default function BitrixTasks({ lang }: BitrixTasksProps) {
             setSelectedUsers([userBitrixRecordId]);
         }
     }, [isSpecialUser, userBitrixRecordId]);
-
-    const loadData = async (triggerSync = false) => {
-        setLoading(true);
-        setError('');
-        try {
-            if (triggerSync) {
-                setSyncing(true);
-                try {
-                    await pb.send('/api/bitrix/sync-incremental', { method: 'POST' });
-                } catch (syncErr) {
-                    console.warn('Sync failed:', syncErr);
-                } finally {
-                    setSyncing(false);
-                }
-            }
-
-            // 1. Fetch IT Dept users and CTO
-            const targetUsers = await pb.collection('bitrix_users').getFullList<BitrixUser>({
-                filter: 'bitrix_id = 7 || departments.bitrix_id ?= 5',
-                expand: 'departments'
-            });
-
-            const uMap = new Map<string, BitrixUser>();
-            const ids = new Set<string>();
-            targetUsers.forEach(u => {
-                uMap.set(u.id, u);
-                ids.add(u.id);
-            });
-            setUserMap(uMap);
-            allowedUserIdsRef.current = ids;
-
-            // 2. Fetch all groups (projects)
-            const groups = await pb.collection('bitrix_groups').getFullList<BitrixGroup>();
-            const gMap = new Map<string, BitrixGroup>();
-            groups.forEach(g => gMap.set(g.id, g));
-            setGroupMap(gMap);
-
-            // 3. Fetch Tasks WITHOUT filters or expand to avoid 400 error and slowness
-            const resultList = await pb.collection('bitrix_tasks_active').getFullList<BitrixTask>({
-                sort: '-created_date',
-            });
-
-            // 4. Filter on client side (safe and fast for 2k records)
-            // Strict enforcement: if not admin/coord, ONLY show personal tasks
-            let filtered = resultList.filter(t => ids.has(t.responsible));
-            if (!isSpecialUser) {
-                // If userBitrixRecordId is null/undefined, this will filter out everything (correct)
-                filtered = filtered.filter(t => t.responsible === userBitrixRecordId);
-            }
-            setTasks(filtered);
-
-        } catch (err: any) {
-            console.error(err);
-            setError(err.message);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        loadData();
-
-        pb.collection('bitrix_tasks_active').subscribe('*', async (e) => {
-            if (e.action === 'delete') {
-                setTasks(prev => prev.filter(t => t.id !== e.record.id));
-                return;
-            }
-
-            try {
-                if (!allowedUserIdsRef.current.has(e.record.responsible)) return;
-
-                // For updates/creates, we don't need expand anymore because we have groupMap
-                const record = e.record as BitrixTask;
-
-                setTasks(prev => {
-                    const exists = prev.find(t => t.id === record.id);
-                    if (exists) {
-                        return prev.map(t => t.id === record.id ? record : t);
-                    } else {
-                        return [record, ...prev];
-                    }
-                });
-            } catch (err) {
-                console.error(err);
-            }
-        });
-
-        return () => {
-            pb.collection('bitrix_tasks_active').unsubscribe('*');
-        };
-    }, []);
 
     const uniqueUsers = useMemo(() => {
         const users = new Map<string, BitrixUser>();
@@ -236,7 +114,7 @@ export default function BitrixTasks({ lang }: BitrixTasksProps) {
                     )}
                     <MultiSelect label="Статусы" options={statusOptions} selected={selectedStatuses} onChange={setSelectedStatuses} />
                     <button 
-                        onClick={() => loadData(true)} 
+                        onClick={() => refresh(true)} 
                         disabled={loading || syncing}
                         style={{ 
                             background: syncing ? '#f1f5f9' : 'white', 
