@@ -4,6 +4,7 @@ export interface TaskField {
     type: string;
     width: string;
     filterable: boolean;
+    required?: boolean;
     order: number;
 }
 

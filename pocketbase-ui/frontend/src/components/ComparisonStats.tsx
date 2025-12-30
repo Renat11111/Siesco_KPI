@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import pb from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
+import { Card } from './ui/Card';
+import { useComparisonStats } from '../hooks/useComparisonStats';
 
 interface ComparisonStatsProps {
     lang: Language;
@@ -11,68 +11,7 @@ interface ComparisonStatsProps {
 
 export default function ComparisonStats({ lang, refreshTrigger, style, className }: ComparisonStatsProps) {
     const t = translations[lang];
-    const [totalHours, setTotalHours] = useState(0);
-    const [loading, setLoading] = useState(false);
-
-    useEffect(() => {
-        fetchComparisonStats();
-
-        // Realtime subscription
-        pb.collection('tasks').subscribe('*', (e) => {
-            const currentUser = pb.authStore.record;
-            if (currentUser && e.record && e.record.user === currentUser.id) {
-                fetchComparisonStats();
-            }
-        });
-
-        return () => {
-            pb.collection('tasks').unsubscribe('*');
-        };
-    }, [refreshTrigger]);
-
-    const fetchComparisonStats = async () => {
-        const user = pb.authStore.record;
-        if (!user) return;
-
-        setLoading(true);
-        
-        try {
-            const now = new Date();
-            const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-            const y = prevMonth.getFullYear();
-            const m = String(prevMonth.getMonth() + 1).padStart(2, '0');
-            const lastDay = new Date(y, prevMonth.getMonth() + 1, 0).getDate();
-
-            const startStr = `${y}-${m}-01 00:00:00`;
-            const endStr = `${y}-${m}-${lastDay} 23:59:59`;
-
-            const records = await pb.collection('tasks').getFullList({
-                filter: `user = "${user.id}" && file_date >= "${startStr}" && file_date <= "${endStr}"`,
-                requestKey: null,
-                fields: 'data'
-            });
-
-            let sum = 0;
-
-            records.forEach(record => {
-                if (Array.isArray(record.data)) {
-                    record.data.forEach((task: any) => {
-                        const hours = Number(task.time_spent);
-                        if (!isNaN(hours)) {
-                            sum += hours;
-                        }
-                    });
-                }
-            });
-
-            setTotalHours(sum);
-
-        } catch (err) {
-            console.error("Failed to fetch comparison stats", err);
-        } finally {
-            setLoading(false);
-        }
-    };
+    const { prevMonthHours, loading } = useComparisonStats(refreshTrigger);
 
     const getPrevMonthName = () => {
         const d = new Date();
@@ -80,40 +19,39 @@ export default function ComparisonStats({ lang, refreshTrigger, style, className
         return d.toLocaleString(lang === 'ru' ? 'ru' : (lang === 'az' ? 'az' : 'en'), { month: 'long', year: 'numeric' });
     };
 
-    return (
-        <div className={`dashboard-card ${className || ''}`} style={style}>
-            <div style={{display: 'flex', flexDirection: 'column', flex: 1}}>
-                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem'}}>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
-                        <div style={{padding: '6px', background: '#fef3c7', borderRadius: '6px', color: '#b45309'}}>
-                            {/* History/Clock Back Icon */}
-                            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                        </div>
-                        <h3 style={{margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)', flexShrink: 1}}>{t.statsComparisonTitle}</h3>
-                    </div>
-                    
-                    <small className="date-badge">
-                        {getPrevMonthName()}
-                    </small>
-                </div>
-                
-                <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0.5rem 0'}}>
-                    {loading ? (
-                         <div style={{fontSize: '0.9rem', color: 'var(--text-muted)'}}>{t.statsLoading}</div>
-                    ) : (
-                        <div style={{textAlign: 'center'}}>
-                             <span style={{fontSize: '2.5rem', fontWeight: 700, color: 'var(--primary)', lineHeight: 1}}>
-                                {totalHours.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
-                             </span>
-                             <div style={{fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.25rem', fontWeight: 500}}>
-                                 {t.colSpent}
-                             </div>
-                        </div>
-                    )}
-                </div>
+    const title = (
+        <>
+            <div style={{padding: '6px', background: '#fef3c7', borderRadius: '6px', color: '#b45309'}}>
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
             </div>
-        </div>
+            <h3 style={{margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)', flexShrink: 1}}>{t.statsComparisonTitle}</h3>
+        </>
+    );
+
+    const extra = (
+        <small className="date-badge">
+            {getPrevMonthName()}
+        </small>
+    );
+
+    return (
+        <Card title={title} extra={extra} className={className} style={style}>
+            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0.5rem 0'}}>
+                {loading ? (
+                     <div style={{fontSize: '0.9rem', color: 'var(--text-muted)'}}>{t.statsLoading}</div>
+                ) : (
+                    <div style={{textAlign: 'center'}}>
+                         <span style={{fontSize: '2.5rem', fontWeight: 700, color: 'var(--primary)', lineHeight: 1}}>
+                            {prevMonthHours.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
+                         </span>
+                         <div style={{fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.25rem', fontWeight: 500}}>
+                             {t.colSpent}
+                         </div>
+                    </div>
+                )}
+            </div>
+        </Card>
     );
 }
