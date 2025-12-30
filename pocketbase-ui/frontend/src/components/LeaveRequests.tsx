@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import pb, { handleApiError } from '../lib/pocketbase';
 import { translations, Language } from '../lib/translations';
 import { UnsubscribeFunc } from 'pocketbase';
+import { validateLeaveDates, checkLeaveOverlap } from '../lib/logic';
 
 interface LeaveRequestsProps {
     lang: Language;
@@ -140,36 +141,12 @@ export default function LeaveRequests({ lang }: LeaveRequestsProps) {
         setError('');
 
         try {
-            // 1. Validate Date Range
-            const start = new Date(startDate);
-            const end = new Date(endDate);
-            const now = new Date();
-            now.setHours(0, 0, 0, 0);
-            const startCheck = new Date(startDate);
-            startCheck.setHours(0, 0, 0, 0);
-
-            if (startCheck < now) {
-                throw new Error(t.errorPastDate);
-            }
-            if (end < start) {
-                throw new Error(t.errorEndDate);
+            const validationError = validateLeaveDates(startDate, endDate, t);
+            if (validationError) {
+                throw new Error(validationError);
             }
 
-            // 2. Check Overlap (Client-side against loaded requests)
-            // Note: This only checks against currently loaded requests. 
-            // Ideally, backend should also enforce this.
-            const hasOverlap = requests.some(req => {
-                if (req.status === 'rejected') return false;
-                if (req.user !== currentUser?.id) return false; // Check only own requests
-                
-                const reqStart = new Date(req.start_date);
-                const reqEnd = new Date(req.end_date);
-                
-                // Overlap condition: (StartA <= EndB) and (EndA >= StartB)
-                return (start <= reqEnd && end >= reqStart);
-            });
-
-            if (hasOverlap) {
+            if (checkLeaveOverlap(startDate, endDate, requests, currentUser?.id || '')) {
                 throw new Error(t.errorOverlap);
             }
 

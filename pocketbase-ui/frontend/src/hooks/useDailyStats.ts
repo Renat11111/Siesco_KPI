@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import pb from '../lib/pocketbase';
 import { getColor } from '../lib/colors';
+import { calculateTotalHours } from '../lib/logic';
 
 export interface StatusDefinition {
     title: string;
@@ -43,13 +44,12 @@ export const useDailyStats = (refreshTrigger: number) => {
 
             records.forEach(record => {
                 if (Array.isArray(record.data)) {
+                    hoursSum += calculateTotalHours(record.data);
                     record.data.forEach((task: any) => {
                         const status = task.status?.trim();
                         if (definitions.some(d => d.title === status)) {
                             counts[status] = (counts[status] || 0) + 1;
                         }
-                        const hours = Number(task.time_spent);
-                        if (!isNaN(hours)) hoursSum += hours;
                     });
                 }
             });

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "pocketbase": "^0.26.3",
@@ -15,10 +16,14 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.1",
     "@types/react": "^18.0.17",
     "@types/react-dom": "^18.0.6",
     "@vitejs/plugin-react": "^2.0.1",
+    "jsdom": "^27.4.0",
     "typescript": "^4.6.4",
-    "vite": "^3.0.7"
+    "vite": "^3.0.7",
+    "vitest": "^4.0.16"
   }
 }

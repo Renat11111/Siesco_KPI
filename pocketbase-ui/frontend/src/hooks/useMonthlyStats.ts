@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import pb from '../lib/pocketbase';
+import { calculateTotalHours } from '../lib/logic';
 
 export const useMonthlyStats = (refreshTrigger: number) => {
     const [monthlyHours, setMonthlyHours] = useState(0);
@@ -22,7 +23,7 @@ export const useMonthlyStats = (refreshTrigger: number) => {
             let sum = 0;
             records.forEach(r => {
                 if (Array.isArray(r.data)) {
-                    r.data.forEach((t: any) => sum += (Number(t.time_spent) || 0));
+                    sum += calculateTotalHours(r.data);
                 }
             });
             setMonthlyHours(sum);
