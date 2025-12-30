@@ -1,16 +1,14 @@
 import React from 'react';
 
-interface CardProps {
+type CardProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'title'> & {
     children: React.ReactNode;
     title?: string | React.ReactNode;
     extra?: React.ReactNode;
-    style?: React.CSSProperties;
-    className?: string;
-}
+};
 
-export const Card = ({ children, title, extra, style, className = '' }: CardProps) => {
+export const Card = ({ children, title, extra, style, className = '', ...props }: CardProps) => {
     return (
-        <div className={`dashboard-card ${className}`} style={{ ...style, marginTop: 0 }}>
+        <div className={`dashboard-card ${className}`} style={{ ...style, marginTop: 0 }} {...props}>
             {(title || extra) && (
                 <div style={{
                     display: 'flex', 

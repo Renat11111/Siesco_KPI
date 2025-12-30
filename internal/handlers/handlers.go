@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"strconv"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
@@ -91,7 +92,6 @@ func HandleCompletedTasksGrouped(pbApp *pocketbase.PocketBase, context *app.AppC
 	taskHistorySumEval := make(map[string]float64)
 	taskLatestData := make(map[string]app.TaskEntry)
 
-	// 1. Считаем АБСОЛЮТНО ВСЕ часы месяца (как в Ranking)
 	for _, r := range records {
 		taskList, _ := utils.ParseTaskData(r.GetString(app.FieldData))
 		for _, t := range taskList {
@@ -113,7 +113,6 @@ func HandleCompletedTasksGrouped(pbApp *pocketbase.PocketBase, context *app.AppC
 		}
 	}
 
-	// 2. Считаем, сколько из этого - текущие "активные" остатки
 	var activeLatestSpent, activeLatestEval float64
 	for _, t := range taskLatestData {
 		if !utils.IsStatusCompleted(t["status"], context.StatusMap) {
@@ -122,14 +121,12 @@ func HandleCompletedTasksGrouped(pbApp *pocketbase.PocketBase, context *app.AppC
 		}
 	}
 
-	// 3. Целевой итог завершенных = Весь месяц - Активные (последние)
 	targetSpent := totalMonthSpent - activeLatestSpent
 	targetEval := totalMonthEval - activeLatestEval
 
 	result := []app.TaskEntry{}
 	var currentResultSpent, currentResultEval float64
 
-	// 4. Формируем список реально завершенных задач
 	for _, t := range taskLatestData {
 		if utils.IsStatusCompleted(t["status"], context.StatusMap) {
 			taskNumKey := strings.TrimSpace(fmt.Sprintf("%v", t["task_number"]))
@@ -141,9 +138,6 @@ func HandleCompletedTasksGrouped(pbApp *pocketbase.PocketBase, context *app.AppC
 		}
 	}
 
-	// 5. Добавляем корректирующую строку (история активных задач)
-	// Это те "куски" времени, которые были потрачены на задачи, которые всё еще в работе.
-	// Они завершены как этапы, поэтому должны быть в этом списке.
 	diffSpent := targetSpent - currentResultSpent
 	diffEval := targetEval - currentResultEval
 
@@ -159,7 +153,6 @@ func HandleCompletedTasksGrouped(pbApp *pocketbase.PocketBase, context *app.AppC
 		})
 	}
 
-	log.Printf("[DEBUG] Math: Total=%.2f, ActiveLatest=%.2f, TargetCompleted=%.2f, ResultSum=%.2f", totalMonthSpent, activeLatestSpent, targetSpent, targetSpent)
 	return e.JSON(http.StatusOK, result)
 }
 
@@ -216,33 +209,45 @@ func HandleUpdateTaskTime(pbApp *pocketbase.PocketBase, context *app.AppContext,
 
 	taskList, _ := utils.ParseTaskData(record.GetString(app.FieldData))
 	found := false
-	        for i, t := range taskList {
-	            if strings.TrimSpace(fmt.Sprintf("%v", t["task_number"])) == data.TaskNumber {
-	                found = true
-	                
-	                // Получаем текущие значения
-	                currTime := 0.0
-	                switch v := t["time_spent"].(type) {
-	                case float64: currTime = v
-	                case int: currTime = float64(v)
-	                }
-	    
-	                // Если оригинал еще не сохранен (даже если флаг редактирования стоит)
-	                orig, exists := t["original_time_spent"]
-	                if !exists || orig == nil || orig == 0.0 {
-	                    t["original_time_spent"] = t["time_spent"]
-	                }
-	    
-	                t["time_spent"] = data.NewTime
-	                t["is_edited"] = true
-	                taskList[i] = t
-	                
-	                log.Printf("[TaskEdit] Task %s: Original=%.2f, New=%.2f", data.TaskNumber, currTime, data.NewTime)
-	                break
-	            }
-	        }
-	    
-		if found {
+	for i, t := range taskList {
+		if strings.TrimSpace(fmt.Sprintf("%v", t["task_number"])) == data.TaskNumber {
+			found = true
+
+			// ВАЖНО: Универсальное получение числа (поддержка json.Number и string)
+			getVal := func(v interface{}) float64 {
+				if v == nil { return 0 }
+				switch val := v.(type) {
+				case json.Number:
+					f, _ := val.Float64()
+					return f
+				case float64: return val
+				case int: return float64(val)
+				case string:
+					f, _ := strconv.ParseFloat(strings.Replace(val, ",", ".", 1), 64)
+					return f
+				}
+				return 0
+			}
+
+			oldTime := getVal(t["time_spent"])
+			origValInDB := getVal(t["original_time_spent"])
+
+			// Если оригинала НЕТ (0), записываем текущее время как оригинал
+			if origValInDB == 0 {
+				t["original_time_spent"] = oldTime
+			}
+
+			t["time_spent"] = data.NewTime
+			t["is_edited"] = true
+			taskList[i] = t
+			
+			log.Printf("[TaskEdit] Task %s: OldTime=%.2f, OrigSaved=%.2f, NewTime=%.2f", 
+				data.TaskNumber, oldTime, getVal(t["original_time_spent"]), data.NewTime)
+			break
+		}
+	}
+
+	if found {
 		newJson, _ := json.Marshal(taskList)
 		record.Set(app.FieldData, string(newJson))
 		pbApp.Save(record)

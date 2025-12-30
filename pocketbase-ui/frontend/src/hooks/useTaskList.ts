@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import pb, { getActualTasks, clearRankingCache } from '../lib/pocketbase';
-import { Task, TaskField, Status, User } from '../types/tasks';
+import { Task, TaskField, Status } from '../types/tasks';
 import { translations } from '../lib/translations';
 
 export const useTaskListConfig = () => {
@@ -10,107 +10,78 @@ export const useTaskListConfig = () => {
     useEffect(() => {
         const loadConfig = async () => {
             try {
-                const fieldsRes = await pb.collection('task_fields').getFullList({ sort: 'order', requestKey: null });
-                const mappedFields: TaskField[] = fieldsRes.map((r: any) => ({
-                    key: r.key,
-                    title: r.title,
-                    type: r.type,
-                    width: r.width || 'auto',
-                    filterable: r.filterable ?? true,
-                    order: r.order || 0
-                }));
-                mappedFields.sort((a, b) => a.order - b.order);
-                setFields(mappedFields);
-
-                const statusesRes = await pb.collection('statuses').getFullList({ requestKey: null });
-                const mappedStatuses: Status[] = statusesRes.map((r: any) => ({
-                    title: r.title,
-                    slug: r.slug,
-                    color: r.color
-                }));
-                setStatuses(mappedStatuses);
-            } catch (e: any) {
-                if (e.isAbort) return; // Ignore abort errors
-                console.error("Failed to load config", e);
-            }
+                const [fRes, sRes] = await Promise.all([
+                    pb.collection('task_fields').getFullList({ sort: 'order', requestKey: 'fields_cfg' }),
+                    pb.collection('statuses').getFullList({ requestKey: 'statuses_cfg' })
+                ]);
+                setFields(fRes.map((r: any) => ({
+                    key: r.key, title: r.title, type: r.type, width: r.width || 'auto', filterable: r.filterable ?? true, order: r.order || 0
+                })).sort((a, b) => a.order - b.order));
+                setStatuses(sRes.map((r: any) => ({ title: r.title, slug: r.slug, color: r.color })));
+            } catch (e: any) { if (!e.isAbort) console.error("Config load error", e); }
         };
         loadConfig();
     }, []);
-
     return { fields, statuses };
 };
 
-export const useTaskListData = (lang: 'ru' | 'en' | 'az', initialUser: string) => {
+export const useTaskListData = (lang: 'ru' | 'en' | 'az') => {
     const [tasks, setTasks] = useState<Task[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const t = translations[lang];
 
     const fetchTasks = useCallback(async (params: {
-        start: string,
-        end: string,
-        userId: string,
-        unfinishedMode: boolean,
-        groupedCompletedMode: boolean
+        start: string, end: string, userId: string, unfinishedMode: boolean, groupedCompletedMode: boolean
     }) => {
         const { start, end, userId, unfinishedMode, groupedCompletedMode } = params;
         if (!start || !end || !userId) return;
 
-        setLoading(true);
-        setError('');
+        setLoading(true); setError('');
         try {
-            const filterStartDate = `${start} 00:00:00`;
-            const filterEndDate = `${end} 23:59:59`;
+            const fStart = `${start} 00:00:00`;
+            const fEnd = `${end} 23:59:59`;
+            let result: Task[] = [];
 
             if (unfinishedMode) {
-                const actualTasks = await getActualTasks(filterStartDate, filterEndDate, userId);
-                setTasks(actualTasks);
+                result = await getActualTasks(fStart, fEnd, userId);
             } else if (groupedCompletedMode) {
-                const groupedTasks = await pb.send('/api/kpi/completed-tasks-grouped', {
-                    params: { start: filterStartDate, end: filterEndDate, user: userId }
+                result = await pb.send('/api/kpi/completed-tasks-grouped', {
+                    params: { start: fStart, end: fEnd, user: userId },
+                    requestKey: null
                 });
-                setTasks(groupedTasks);
             } else {
-                const filter = `user = "${userId}" && file_date >= "${filterStartDate}" && file_date <= "${filterEndDate}"`;
                 const records = await pb.collection('tasks').getFullList({
-                    filter: filter,
+                    filter: `user = "${userId}" && file_date >= "${fStart}" && file_date <= "${fEnd}"`,
                     sort: '-file_date',
-                    requestKey: null,
+                    requestKey: null
                 });
-
-                let aggregatedTasks: Task[] = [];
                 records.forEach(record => {
-                    const tasksInFile = record.data; 
-                    if (Array.isArray(tasksInFile)) {
-                        tasksInFile.forEach((t: any) => {
-                            aggregatedTasks.push({
-                                ...t,
+                    if (Array.isArray(record.data)) {
+                        record.data.forEach((item: any) => {
+                            result.push({
+                                ...item,
                                 source_file_date: record.file_date,
                                 source_file_id: record.id
                             });
                         });
                     }
                 });
-                setTasks(aggregatedTasks);
             }
+            setTasks(result);
         } catch (err: any) {
-            console.error("Error fetching tasks:", err);
-            setError(err.message || t.genericError);
-        } finally {
-            setLoading(false);
-        }
+            if (!err.isAbort) {
+                console.error("Fetch tasks error:", err);
+                setError(err.message || t.genericError);
+            }
+        } finally { setLoading(false); }
     }, [t.genericError]);
 
     const updateTaskTime = async (task: Task, newVal: number) => {
-        if (!task.source_file_id || !task.task_number) throw new Error("Missing ID context");
-        
+        if (!task.source_file_id || !task.task_number) throw new Error("Missing context");
         await pb.send('/api/kpi/update-task-time', {
             method: 'POST',
-            body: {
-                record_id: task.source_file_id,
-                task_number: task.task_number,
-                new_time: newVal
-            }
+            body: { record_id: task.source_file_id, task_number: task.task_number, new_time: newVal }
         });
         clearRankingCache();
     };
